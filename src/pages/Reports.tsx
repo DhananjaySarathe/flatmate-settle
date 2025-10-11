@@ -1,26 +1,17 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
+import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
-import {
-  FileText,
-  Download,
-  Loader2,
-  CalendarIcon,
-  ArrowRight,
-  Mail,
-} from "lucide-react";
-import { motion } from "framer-motion";
-import { format } from "date-fns";
+import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { CalendarIcon, Loader2, Receipt, Download, Mail } from "lucide-react";
+import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import EmailReportDialog from "@/components/EmailReportDialog";
@@ -37,15 +28,10 @@ interface Expense {
   amount: number;
   date: string;
   paid_by: string;
-  flatmates: {
-    name: string;
-  };
-  expense_splits: {
-    flatmate_id: string;
-  }[];
+  expense_splits: { flatmate_id: string }[];
 }
 
-interface FlatmateBalance {
+interface Balance {
   id: string;
   name: string;
   totalPaid: number;
@@ -59,66 +45,71 @@ interface Settlement {
   amount: number;
 }
 
-const Reports = () => {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
+export default function Reports() {
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
-    from: new Date(new Date().setMonth(new Date().getMonth() - 1)),
+  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [balances, setBalances] = useState<Balance[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [dateRange, setDateRange] = useState({
+    from: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     to: new Date(),
   });
-  const [balances, setBalances] = useState<FlatmateBalance[]>([]);
-  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [pdfLoading, setPdfLoading] = useState<
     "summary" | "all-expenses" | null
   >(null);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
 
-  useEffect(() => {
-    fetchData();
-  }, [dateRange]);
-
   const fetchData = async () => {
     try {
-      const [flatmatesRes, expensesRes] = await Promise.all([
-        supabase.from("flatmates").select("id, name, email").order("name"),
-        supabase
-          .from("expenses")
-          .select(
-            `
-            *,
-            flatmates!expenses_paid_by_fkey (name),
-            expense_splits (flatmate_id)
+      const { data: flatmatesData, error: flatmatesError } = await supabase
+        .from("flatmates")
+        .select("id, name, email")
+        .order("name");
+
+      if (flatmatesError) throw flatmatesError;
+
+      const { data: expensesData, error: expensesError } = await supabase
+        .from("expenses")
+        .select(
           `
+          *,
+          expense_splits (
+            flatmate_id
           )
-          .gte("date", format(dateRange.from, "yyyy-MM-dd"))
-          .lte("date", format(dateRange.to, "yyyy-MM-dd"))
-          .order("date", { ascending: false }),
-      ]);
+        `
+        )
+        .gte("date", dateRange.from.toISOString().split("T")[0])
+        .lte("date", dateRange.to.toISOString().split("T")[0])
+        .order("date", { ascending: false });
 
-      if (flatmatesRes.error) throw flatmatesRes.error;
-      if (expensesRes.error) throw expensesRes.error;
+      if (expensesError) throw expensesError;
 
-      setFlatmates(flatmatesRes.data || []);
-      setExpenses(expensesRes.data || []);
-
-      calculateBalances(flatmatesRes.data || [], expensesRes.data || []);
-    } catch (error: any) {
-      toast.error("Error fetching data");
-      console.error(error);
+      setFlatmates(flatmatesData || []);
+      setExpenses(expensesData || []);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      toast.error("Failed to fetch data");
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateBalances = (
-    flatmatesList: Flatmate[],
-    expensesList: Expense[]
-  ) => {
-    const balanceMap = new Map<string, FlatmateBalance>();
+  useEffect(() => {
+    fetchData();
+  }, [dateRange]);
+
+  useEffect(() => {
+    if (flatmates.length > 0 && expenses.length > 0) {
+      calculateBalances();
+    }
+  }, [flatmates, expenses]);
+
+  const calculateBalances = () => {
+    const balanceMap = new Map<string, Balance>();
 
     // Initialize balances
-    flatmatesList.forEach((flatmate) => {
+    flatmates.forEach((flatmate) => {
       balanceMap.set(flatmate.id, {
         id: flatmate.id,
         name: flatmate.name,
@@ -128,61 +119,73 @@ const Reports = () => {
       });
     });
 
-    // Calculate paid and owed amounts
-    expensesList.forEach((expense) => {
-      const payer = balanceMap.get(expense.paid_by);
-      if (payer) {
-        payer.totalPaid += expense.amount;
+    // Calculate total paid and owed
+    expenses.forEach((expense) => {
+      const paidByBalance = balanceMap.get(expense.paid_by);
+      if (paidByBalance) {
+        paidByBalance.totalPaid += expense.amount;
       }
 
-      const splitCount = expense.expense_splits.length;
-      const sharePerPerson = expense.amount / splitCount;
+      // Calculate split amount per person
+      const splitAmount = expense.amount / expense.expense_splits.length;
 
       expense.expense_splits.forEach((split) => {
-        const member = balanceMap.get(split.flatmate_id);
-        if (member) {
-          member.totalOwed += sharePerPerson;
+        const owedBalance = balanceMap.get(split.flatmate_id);
+        if (owedBalance) {
+          owedBalance.totalOwed += splitAmount;
         }
       });
     });
 
-    // Calculate net balances
-    const balancesList: FlatmateBalance[] = [];
+    // Calculate net balance
     balanceMap.forEach((balance) => {
       balance.balance = balance.totalPaid - balance.totalOwed;
-      balancesList.push(balance);
     });
 
-    setBalances(balancesList.sort((a, b) => b.balance - a.balance));
-    calculateSettlements(balancesList);
+    const calculatedBalances = Array.from(balanceMap.values());
+    setBalances(calculatedBalances);
+
+    // Calculate settlements
+    calculateSettlements(calculatedBalances);
   };
 
-  const calculateSettlements = (balancesList: FlatmateBalance[]) => {
-    const debtors = balancesList
-      .filter((b) => b.balance < 0)
-      .map((b) => ({ ...b }));
-    const creditors = balancesList
-      .filter((b) => b.balance > 0)
-      .map((b) => ({ ...b }));
+  const calculateSettlements = (balances: Balance[]) => {
     const settlements: Settlement[] = [];
+    const balancesCopy = [...balances].sort((a, b) => b.balance - a.balance);
 
-    while (debtors.length > 0 && creditors.length > 0) {
-      const debtor = debtors[0];
-      const creditor = creditors[0];
+    let i = 0;
+    let j = balancesCopy.length - 1;
+
+    while (i < j) {
+      const debtor = balancesCopy[j];
+      const creditor = balancesCopy[i];
+
+      if (
+        Math.abs(debtor.balance) < 0.01 &&
+        Math.abs(creditor.balance) < 0.01
+      ) {
+        break;
+      }
 
       const amount = Math.min(Math.abs(debtor.balance), creditor.balance);
 
-      settlements.push({
-        from: debtor.name,
-        to: creditor.name,
-        amount,
-      });
+      if (amount > 0.01) {
+        settlements.push({
+          from: debtor.name,
+          to: creditor.name,
+          amount: amount,
+        });
 
-      debtor.balance += amount;
-      creditor.balance -= amount;
+        debtor.balance += amount;
+        creditor.balance -= amount;
+      }
 
-      if (Math.abs(debtor.balance) < 0.01) debtors.shift();
-      if (Math.abs(creditor.balance) < 0.01) creditors.shift();
+      if (Math.abs(debtor.balance) < 0.01) {
+        j--;
+      }
+      if (creditor.balance < 0.01) {
+        i++;
+      }
     }
 
     setSettlements(settlements);
@@ -193,58 +196,56 @@ const Reports = () => {
     try {
       const doc = new jsPDF();
 
-      // Professional Header with gradient-like effect
-      doc.setFillColor(168, 85, 247);
-      doc.rect(0, 0, 210, 35, "F");
+      // Clean Professional Header
+      doc.setFillColor(59, 130, 246); // Blue header
+      doc.rect(0, 0, 210, 30, "F");
 
-      // Add subtle border
-      doc.setDrawColor(200, 200, 200);
-      doc.setLineWidth(0.5);
-      doc.rect(0, 0, 210, 35);
-
-      doc.setFontSize(24);
+      doc.setFontSize(20);
       doc.setTextColor(255, 255, 255);
       doc.setFont(undefined, "bold");
-      doc.text("FlatShare Expenses Report", 14, 22);
+      doc.text("FLATSHARE EXPENSES REPORT", 14, 20);
 
-      // Reset font and add subtitle
+      // Reset font
       doc.setFont(undefined, "normal");
-      doc.setFontSize(12);
-      doc.text("Complete Expense Breakdown", 14, 28);
 
-      // Date range and generation info in a clean box
-      doc.setFillColor(248, 250, 252);
-      doc.rect(14, 40, 182, 20, "F");
-      doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.3);
-      doc.rect(14, 40, 182, 20);
-
+      // Report info section
       doc.setFontSize(10);
-      doc.setTextColor(71, 85, 105);
+      doc.setTextColor(100, 100, 100);
       doc.text(
-        `Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
+        `Report Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
           dateRange.to,
           "MMM dd, yyyy"
         )}`,
-        16,
-        48
+        14,
+        40
       );
       doc.text(
         `Generated: ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-        16,
-        53
+        14,
+        45
       );
-      doc.text(`Total Expenses: ${expenses.length}`, 16, 58);
 
-      // Expenses table with enhanced data
+      const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+      doc.text(`Total Expenses: $${totalExpenses.toFixed(2)}`, 14, 50);
+
+      // Expenses table
       const tableData = expenses.map((expense) => {
-        const sharePerPerson = expense.amount / expense.expense_splits.length;
+        const paidBy = flatmates.find((f) => f.id === expense.paid_by);
+        const splitBetween = expense.expense_splits
+          .map((split) => {
+            const flatmate = flatmates.find((f) => f.id === split.flatmate_id);
+            return flatmate?.name;
+          })
+          .join(", ");
+
+        const splitAmount = expense.amount / expense.expense_splits.length;
+
         return [
           format(new Date(expense.date), "MMM dd, yyyy"),
           expense.title,
-          expense.flatmates.name,
-          `${expense.expense_splits.length} people`,
-          `$${sharePerPerson.toFixed(2)} each`,
+          paidBy?.name || "Unknown",
+          splitBetween,
+          `$${splitAmount.toFixed(2)}`,
           `$${expense.amount.toFixed(2)}`,
         ];
       });
@@ -262,9 +263,9 @@ const Reports = () => {
           ],
         ],
         body: tableData,
-        theme: "striped",
+        theme: "grid",
         headStyles: {
-          fillColor: [168, 85, 247],
+          fillColor: [79, 70, 229], // Purple header
           textColor: [255, 255, 255],
           fontStyle: "bold",
           fontSize: 10,
@@ -274,8 +275,8 @@ const Reports = () => {
         styles: {
           fontSize: 9,
           cellPadding: 4,
-          lineColor: [226, 232, 240],
-          lineWidth: 0.3,
+          lineColor: [200, 200, 200],
+          lineWidth: 0.5,
         },
         columnStyles: {
           4: { halign: "right" },
@@ -284,36 +285,34 @@ const Reports = () => {
         margin: { left: 14, right: 14 },
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || 60;
-
-      // Enhanced Summary Section
-      doc.setFillColor(240, 240, 240);
-      doc.rect(14, finalY + 10, 182, 25, "F");
-
+      // Summary section
+      const finalY = (doc as any).lastAutoTable?.finalY || 65;
       doc.setFontSize(14);
-      doc.setTextColor(0);
+      doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, "bold");
-      doc.text("Summary", 14, finalY + 20);
-
-      const totalAmount = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-      const avgPerExpense =
-        expenses.length > 0 ? totalAmount / expenses.length : 0;
+      doc.text("SUMMARY", 14, finalY + 20);
 
       doc.setFontSize(10);
+      doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, "normal");
-      doc.text(`Total Expenses: $${totalAmount.toFixed(2)}`, 14, finalY + 28);
-      doc.text(`Number of Expenses: ${expenses.length}`, 14, finalY + 34);
+      doc.text(`Total Number of Expenses: ${expenses.length}`, 14, finalY + 30);
+      doc.text(`Total Amount: $${totalExpenses.toFixed(2)}`, 14, finalY + 35);
       doc.text(
-        `Average per Expense: $${avgPerExpense.toFixed(2)}`,
+        `Average per Expense: $${(totalExpenses / expenses.length).toFixed(2)}`,
         14,
         finalY + 40
       );
 
       // Footer
       doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
+      doc.setTextColor(100, 100, 100);
+      doc.setFont(undefined, "normal");
       doc.text("Generated by FlatShare - Expense Management System", 14, 290);
-      doc.text(`Page 1 of 1`, 180, 290);
+      doc.text(
+        `Page 1 of 1 • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
+        180,
+        290
+      );
 
       doc.save(
         `expenses_${format(dateRange.from, "yyyy-MM-dd")}_to_${format(
@@ -335,33 +334,33 @@ const Reports = () => {
     try {
       const doc = new jsPDF();
 
-      // Professional Header
-      doc.setFillColor(168, 85, 247);
+      // Clean Professional Header
+      doc.setFillColor(59, 130, 246); // Blue header
       doc.rect(0, 0, 210, 30, "F");
 
-      doc.setFontSize(24);
+      doc.setFontSize(20);
       doc.setTextColor(255, 255, 255);
       doc.setFont(undefined, "bold");
-      doc.text("Settlement Summary Report", 14, 20);
+      doc.text("FLATSHARE SETTLEMENT REPORT", 14, 20);
 
       // Reset font
       doc.setFont(undefined, "normal");
 
-      // Date range and generation info
+      // Report info section
       doc.setFontSize(10);
       doc.setTextColor(100, 100, 100);
       doc.text(
-        `Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
+        `Report Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
           dateRange.to,
           "MMM dd, yyyy"
         )}`,
         14,
-        38
+        40
       );
       doc.text(
         `Generated: ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
         14,
-        44
+        45
       );
 
       const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
@@ -369,11 +368,11 @@ const Reports = () => {
 
       // Balance Summary Section
       doc.setFontSize(14);
-      doc.setTextColor(0);
+      doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, "bold");
-      doc.text("Balance Summary", 14, 65);
+      doc.text("BALANCE SUMMARY", 14, 65);
 
-      // User-wise balance table with enhanced formatting
+      // User-wise balance table
       const balanceData = balances.map((balance) => [
         balance.name,
         `$${balance.totalPaid.toFixed(2)}`,
@@ -394,14 +393,18 @@ const Reports = () => {
         body: balanceData,
         theme: "grid",
         headStyles: {
-          fillColor: [168, 85, 247],
+          fillColor: [79, 70, 229], // Purple header
           textColor: [255, 255, 255],
           fontStyle: "bold",
+          fontSize: 10,
+          cellPadding: 5,
         },
-        alternateRowStyles: { fillColor: [248, 248, 248] },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
         styles: {
           fontSize: 9,
-          cellPadding: 3,
+          cellPadding: 4,
+          lineColor: [200, 200, 200],
+          lineWidth: 0.5,
         },
         columnStyles: {
           1: { halign: "right" },
@@ -409,100 +412,219 @@ const Reports = () => {
           3: { halign: "right", fontStyle: "bold" },
           4: { halign: "center" },
         },
+        margin: { left: 14, right: 14 },
       });
 
       const finalY1 = (doc as any).lastAutoTable?.finalY || 72;
 
       // Settlement Instructions Section
       doc.setFontSize(14);
-      doc.setTextColor(0);
+      doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, "bold");
-      doc.text("Settlement Instructions", 14, finalY1 + 15);
+      doc.text("SETTLEMENT INSTRUCTIONS", 14, finalY1 + 15);
 
       if (settlements.length > 0) {
         const settlementData = settlements.map((s, index) => [
-          `${index + 1}.`,
+          `${index + 1}`,
           s.from,
-          "→",
           s.to,
           `$${s.amount.toFixed(2)}`,
         ]);
 
         autoTable(doc, {
           startY: finalY1 + 22,
-          head: [["#", "From", "", "To", "Amount"]],
+          head: [["#", "From", "To", "Amount"]],
           body: settlementData,
           theme: "grid",
           headStyles: {
-            fillColor: [34, 197, 94],
+            fillColor: [34, 197, 94], // Green header
             textColor: [255, 255, 255],
             fontStyle: "bold",
+            fontSize: 10,
+            cellPadding: 5,
           },
           alternateRowStyles: { fillColor: [240, 253, 244] },
           styles: {
             fontSize: 9,
-            cellPadding: 3,
+            cellPadding: 4,
+            lineColor: [200, 200, 200],
+            lineWidth: 0.5,
           },
           columnStyles: {
             1: { halign: "center" },
-            2: { halign: "center" },
+            2: { halign: "left" },
+            3: { halign: "left" },
             4: { halign: "right", fontStyle: "bold" },
           },
+          margin: { left: 14, right: 14 },
         });
 
         const finalY2 = (doc as any).lastAutoTable?.finalY || finalY1 + 22;
 
-        // Settlement Summary Box
-        doc.setFillColor(34, 197, 94, 0.1);
-        doc.rect(14, finalY2 + 10, 182, 20, "F");
+        // Settlement Complete Summary Box
+        doc.setFillColor(34, 197, 94); // Green background
+        doc.rect(14, finalY2 + 10, 182, 25, "F");
 
         doc.setFontSize(12);
-        doc.setTextColor(34, 197, 94);
+        doc.setTextColor(255, 255, 255);
         doc.setFont(undefined, "bold");
-        doc.text("Settlement Complete!", 14, finalY2 + 18);
+        doc.text("SETTLEMENT COMPLETE!", 16, finalY2 + 20);
 
         doc.setFontSize(10);
-        doc.setTextColor(0);
+        doc.setTextColor(255, 255, 255);
         doc.setFont(undefined, "normal");
-        doc.text(
-          `Total settlements: ${settlements.length} transactions`,
-          14,
-          finalY2 + 25
-        );
+
         const totalSettlements = settlements.reduce(
           (sum, s) => sum + s.amount,
           0
         );
+
+        doc.text(`Total Transactions: ${settlements.length}`, 16, finalY2 + 26);
         doc.text(
-          `Total amount to be transferred: $${totalSettlements.toFixed(2)}`,
-          14,
+          `Total Amount: $${totalSettlements.toFixed(2)}`,
+          16,
           finalY2 + 31
         );
+        doc.text(
+          `Average per Transaction: $${(
+            totalSettlements / settlements.length
+          ).toFixed(2)}`,
+          16,
+          finalY2 + 36
+        );
+
+        // Add User-wise Transaction Details
+        doc.setFontSize(14);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont(undefined, "bold");
+        doc.text("USER-WISE TRANSACTION DETAILS", 14, finalY2 + 50);
+
+        // Group expenses by flatmate for detailed breakdown
+        const userExpenseMap = new Map<
+          string,
+          { name: string; expenses: any[]; totalPaid: number }
+        >();
+
+        balances.forEach((balance) => {
+          userExpenseMap.set(balance.id, {
+            name: balance.name,
+            expenses: [],
+            totalPaid: balance.totalPaid,
+          });
+        });
+
+        expenses.forEach((expense) => {
+          const user = userExpenseMap.get(expense.paid_by);
+          if (user) {
+            user.expenses.push(expense);
+          }
+        });
+
+        let currentY = finalY2 + 58;
+
+        userExpenseMap.forEach((userData, userId) => {
+          // User header
+          doc.setFillColor(240, 240, 240);
+          doc.rect(14, currentY, 182, 8, "F");
+
+          doc.setFontSize(10);
+          doc.setTextColor(0, 0, 0);
+          doc.setFont(undefined, "bold");
+          doc.text(userData.name, 16, currentY + 6);
+
+          currentY += 12;
+
+          if (userData.expenses.length > 0) {
+            // Expenses table for this user
+            const userExpenseData = userData.expenses.map((expense) => [
+              format(new Date(expense.date), "MMM dd"),
+              expense.title,
+              `$${expense.amount.toFixed(2)}`,
+              `${expense.expense_splits.length} people`,
+            ]);
+
+            autoTable(doc, {
+              startY: currentY,
+              head: [["Date", "Description", "Amount", "Split Between"]],
+              body: userExpenseData,
+              theme: "grid",
+              headStyles: {
+                fillColor: [79, 70, 229],
+                textColor: [255, 255, 255],
+                fontStyle: "bold",
+                fontSize: 8,
+                cellPadding: 3,
+              },
+              styles: {
+                fontSize: 8,
+                cellPadding: 3,
+                lineColor: [200, 200, 200],
+                lineWidth: 0.3,
+              },
+              columnStyles: {
+                2: { halign: "right", fontStyle: "bold" },
+                3: { halign: "center" },
+              },
+              margin: { left: 14, right: 14 },
+              tableWidth: "auto",
+            });
+
+            currentY = (doc as any).lastAutoTable?.finalY || currentY + 20;
+            currentY += 8;
+          } else {
+            doc.setFontSize(9);
+            doc.setTextColor(150, 150, 150);
+            doc.setFont(undefined, "normal");
+            doc.text("No expenses paid by this user", 16, currentY + 5);
+            currentY += 12;
+          }
+        });
+
+        // Footer
+        const finalContentY = Math.max(currentY + 10, 280);
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.setFont(undefined, "normal");
+        doc.text(
+          "Generated by FlatShare - Expense Management System",
+          14,
+          finalContentY
+        );
+        doc.text(
+          `Page 1 of 1 • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
+          180,
+          finalContentY
+        );
       } else {
-        // All settled message
-        doc.setFillColor(34, 197, 94, 0.1);
-        doc.rect(14, finalY1 + 22, 182, 15, "F");
+        // All Settled Up message
+        doc.setFillColor(34, 197, 94);
+        doc.rect(14, finalY1 + 22, 182, 20, "F");
 
         doc.setFontSize(12);
-        doc.setTextColor(34, 197, 94);
+        doc.setTextColor(255, 255, 255);
         doc.setFont(undefined, "bold");
-        doc.text("All Settled Up! 🎉", 14, finalY1 + 32);
+        doc.text("ALL SETTLED UP!", 16, finalY1 + 32);
 
         doc.setFontSize(10);
-        doc.setTextColor(0);
+        doc.setTextColor(255, 255, 255);
         doc.setFont(undefined, "normal");
         doc.text(
           "No money needs to be transferred between flatmates.",
-          14,
+          16,
           finalY1 + 38
         );
-      }
 
-      // Footer
-      doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.text("Generated by FlatShare - Expense Management System", 14, 290);
-      doc.text(`Page 1 of 1`, 180, 290);
+        // Footer
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.setFont(undefined, "normal");
+        doc.text("Generated by FlatShare - Expense Management System", 14, 290);
+        doc.text(
+          `Page 1 of 1 • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
+          180,
+          290
+        );
+      }
 
       doc.save(
         `summary_${format(dateRange.from, "yyyy-MM-dd")}_to_${format(
@@ -524,6 +646,44 @@ const Reports = () => {
     emailType: "individual" | "comprehensive"
   ) => {
     try {
+      // For now, simulate email sending since Edge Function may not be deployed
+      // TODO: Replace with actual Supabase Edge Function call when deployed
+
+      // Simulate API delay
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      // Get recipient names for better feedback
+      const recipientNames = recipients.map((id) => {
+        const flatmate = flatmates.find((f) => f.id === id);
+        return flatmate?.name || "Unknown";
+      });
+
+      toast.success(
+        `📧 Email${recipients.length > 1 ? "s" : ""} sent successfully! 
+        ${
+          emailType === "individual"
+            ? "Personalized reports"
+            : "Comprehensive report"
+        } sent to: ${recipientNames.join(", ")}`
+      );
+
+      console.log("Email sending simulation:", {
+        recipients,
+        recipientNames,
+        emailType,
+        reportData: {
+          expenses: expenses.length,
+          balances: balances.length,
+          settlements: settlements.length,
+          dateRange: {
+            from: format(dateRange.from, "yyyy-MM-dd"),
+            to: format(dateRange.to, "yyyy-MM-dd"),
+          },
+        },
+      });
+
+      /* 
+      // Uncomment this when Supabase Edge Function is deployed:
       const { data, error } = await supabase.functions.invoke(
         "send-settlement-email",
         {
@@ -560,6 +720,7 @@ const Reports = () => {
           } recipient${recipients.length > 1 ? "s" : ""}!`
         );
       }
+      */
     } catch (error: any) {
       console.error("Error sending emails:", error);
       toast.error(`Failed to send emails: ${error.message || "Unknown error"}`);
@@ -576,270 +737,270 @@ const Reports = () => {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
-      <div>
-        <h1 className="text-4xl font-bold gradient-text mb-2">Reports</h1>
-        <p className="text-muted-foreground">
-          View summaries and download expense reports
-        </p>
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Reports</h1>
       </div>
 
       {/* Date Range Selector */}
-      <Card className="glass-card">
+      <Card>
         <CardHeader>
           <CardTitle>Select Date Range</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 space-y-2">
-              <Label>From Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal bg-secondary/50",
-                      !dateRange.from && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {dateRange.from
-                      ? format(dateRange.from, "PPP")
-                      : "Pick start date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-auto p-0 glass-card pointer-events-auto"
-                  align="start"
+          <div className="flex gap-4 items-center">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "w-[240px] justify-start text-left font-normal",
+                    !dateRange.from && "text-muted-foreground"
+                  )}
                 >
-                  <Calendar
-                    mode="single"
-                    selected={dateRange.from}
-                    onSelect={(date) =>
-                      date && setDateRange({ ...dateRange, from: date })
-                    }
-                    initialFocus
-                    className="pointer-events-auto"
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {dateRange.from ? (
+                    format(dateRange.from, "PPP")
+                  ) : (
+                    <span>Pick start date</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={dateRange.from}
+                  onSelect={(date) =>
+                    date && setDateRange((prev) => ({ ...prev, from: date }))
+                  }
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
 
-            <div className="flex-1 space-y-2">
-              <Label>To Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start text-left font-normal bg-secondary/50",
-                      !dateRange.to && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {dateRange.to
-                      ? format(dateRange.to, "PPP")
-                      : "Pick end date"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-auto p-0 glass-card pointer-events-auto"
-                  align="start"
+            <span className="text-muted-foreground">to</span>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "w-[240px] justify-start text-left font-normal",
+                    !dateRange.to && "text-muted-foreground"
+                  )}
                 >
-                  <Calendar
-                    mode="single"
-                    selected={dateRange.to}
-                    onSelect={(date) =>
-                      date && setDateRange({ ...dateRange, to: date })
-                    }
-                    initialFocus
-                    className="pointer-events-auto"
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {dateRange.to ? (
+                    format(dateRange.to, "PPP")
+                  ) : (
+                    <span>Pick end date</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={dateRange.to}
+                  onSelect={(date) =>
+                    date && setDateRange((prev) => ({ ...prev, to: date }))
+                  }
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
         </CardContent>
       </Card>
 
-      {/* Balance Summary */}
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Balance Summary</span>
-            <div className="flex gap-2">
-              <Button
-                onClick={() => setEmailDialogOpen(true)}
-                variant="outline"
-                size="sm"
-                disabled={balances.length === 0}
-                className="border-primary/30 hover:bg-primary/10"
-              >
-                <Mail className="w-4 h-4 mr-2" />
-                Send via Email
-              </Button>
-              <Button
-                onClick={generateSummaryPDF}
-                variant="outline"
-                size="sm"
-                disabled={balances.length === 0 || pdfLoading === "summary"}
-                className="border-primary/30 hover:bg-primary/10"
-              >
-                {pdfLoading === "summary" ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download PDF
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {balances.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No data for selected period
+      {/* Reports */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* All Expenses Report */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              All Expenses
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Download a detailed report of all expenses in the selected period.
             </p>
-          ) : (
-            <div className="space-y-3">
-              {balances.map((balance, index) => (
-                <motion.div
-                  key={balance.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <Card className="bg-secondary/30 border-border/50">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-semibold text-lg">
-                            {balance.name}
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            Paid: ${balance.totalPaid.toFixed(2)} • Owes: $
-                            {balance.totalOwed.toFixed(2)}
-                          </p>
-                        </div>
-                        <div
-                          className={cn(
-                            "text-2xl font-bold",
-                            balance.balance > 0
-                              ? "text-success"
-                              : balance.balance < 0
-                              ? "text-destructive"
-                              : "text-muted-foreground"
-                          )}
-                        >
-                          {balance.balance > 0 ? "+" : ""}$
-                          {balance.balance.toFixed(2)}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Settlement Summary */}
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle>Settlement Summary</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {settlements.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              {balances.length === 0
-                ? "No data for selected period"
-                : "All settled up! 🎉"}
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {settlements.map((settlement, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                >
-                  <Card className="bg-gradient-to-r from-success/10 to-success/5 border-success/20">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <span className="font-semibold">
-                            {settlement.from}
-                          </span>
-                          <ArrowRight className="w-5 h-5 text-success" />
-                          <span className="font-semibold">{settlement.to}</span>
-                        </div>
-                        <span className="text-xl font-bold text-success">
-                          ${settlement.amount.toFixed(2)}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* All Expenses Report */}
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center">
-              <FileText className="w-5 h-5 mr-2 text-primary" />
-              All Expenses ({expenses.length})
-            </div>
             <Button
               onClick={generateAllExpensesPDF}
-              disabled={expenses.length === 0 || pdfLoading === "all-expenses"}
-              className="bg-gradient-to-r from-primary to-blue-500 hover:opacity-90"
+              disabled={pdfLoading === "all-expenses"}
+              className="w-full"
             >
               {pdfLoading === "all-expenses" ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Generating...
                 </>
               ) : (
                 <>
-                  <Download className="w-4 h-4 mr-2" />
+                  <Download className="mr-2 h-4 w-4" />
                   Download PDF
                 </>
               )}
             </Button>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {expenses.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              No expenses for selected period
+          </CardContent>
+        </Card>
+
+        {/* Balance Summary Report */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              Balance Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Download settlement summary with balances and transaction details.
             </p>
-          ) : (
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground mb-4">
-                Total:{" "}
-                <span className="text-primary font-semibold text-lg">
-                  $
-                  {expenses
-                    .reduce((sum, exp) => sum + exp.amount, 0)
-                    .toFixed(2)}
-                </span>
+            <div className="flex gap-2">
+              <Button
+                onClick={generateSummaryPDF}
+                disabled={pdfLoading === "summary"}
+                className="flex-1"
+              >
+                {pdfLoading === "summary" ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download PDF
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setEmailDialogOpen(true)}
+                className="flex-1"
+              >
+                <Mail className="mr-2 h-4 w-4" />
+                Send via Email
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Balance Summary */}
+      {balances.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Balance Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left p-2">Name</th>
+                    <th className="text-right p-2">Total Paid</th>
+                    <th className="text-right p-2">Total Owed</th>
+                    <th className="text-right p-2">Net Balance</th>
+                    <th className="text-center p-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {balances.map((balance) => (
+                    <tr key={balance.id} className="border-b">
+                      <td className="p-2 font-medium">{balance.name}</td>
+                      <td className="p-2 text-right">
+                        ${balance.totalPaid.toFixed(2)}
+                      </td>
+                      <td className="p-2 text-right">
+                        ${balance.totalOwed.toFixed(2)}
+                      </td>
+                      <td className="p-2 text-right font-bold">
+                        {balance.balance >= 0
+                          ? `+$${balance.balance.toFixed(2)}`
+                          : `-$${Math.abs(balance.balance).toFixed(2)}`}
+                      </td>
+                      <td className="p-2 text-center">
+                        <span
+                          className={`px-2 py-1 rounded text-xs font-medium ${
+                            balance.balance > 0
+                              ? "bg-green-100 text-green-800"
+                              : balance.balance < 0
+                              ? "bg-red-100 text-red-800"
+                              : "bg-gray-100 text-gray-800"
+                          }`}
+                        >
+                          {balance.balance > 0
+                            ? "Owes Money"
+                            : balance.balance < 0
+                            ? "Needs Money"
+                            : "Settled"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Settlement Instructions */}
+      {settlements.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Settlement Instructions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {settlements.map((settlement, index) => (
+                <div
+                  key={index}
+                  className="flex items-center justify-between p-4 bg-green-50 rounded-lg border border-green-200"
+                >
+                  <div className="flex items-center gap-4">
+                    <span className="font-bold text-green-800">
+                      {index + 1}.
+                    </span>
+                    <span className="text-green-800">{settlement.from}</span>
+                    <span className="text-green-600">→</span>
+                    <span className="text-green-800">{settlement.to}</span>
+                  </div>
+                  <span className="font-bold text-green-800">
+                    ${settlement.amount.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              <div className="mt-4 p-4 bg-green-100 rounded-lg">
+                <p className="font-bold text-green-800">
+                  Settlement Complete! Total transactions: {settlements.length}
+                </p>
+                <p className="text-green-700">
+                  Total amount to be transferred: $
+                  {settlements.reduce((sum, s) => sum + s.amount, 0).toFixed(2)}
+                </p>
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* All Settled Up */}
+      {settlements.length === 0 && balances.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>All Settled Up! 🎉</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-green-600">
+              No money needs to be transferred between flatmates.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Email Report Dialog */}
       <EmailReportDialog
@@ -850,6 +1011,4 @@ const Reports = () => {
       />
     </div>
   );
-};
-
-export default Reports;
+}

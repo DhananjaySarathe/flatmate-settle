@@ -77,9 +77,9 @@ const EmailReportDialog = ({
       await onSendEmail(selectedRecipients, emailType);
       onOpenChange(false);
       setSelectedRecipients([]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sending email:", error);
-      toast.error("Failed to send email");
+      toast.error(`Failed to send email: ${error.message || "Unknown error"}`);
     } finally {
       setSending(false);
     }
