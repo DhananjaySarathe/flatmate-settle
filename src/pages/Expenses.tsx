@@ -20,11 +20,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Receipt, Trash2, Edit, Loader2, Calendar as CalendarIcon } from "lucide-react";
+import {
+  Plus,
+  Receipt,
+  Trash2,
+  Edit,
+  Loader2,
+  Calendar as CalendarIcon,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { format } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -60,6 +71,8 @@ const Expenses = () => {
     paidBy: "",
     splitBetween: [] as string[],
   });
+  const [submitLoading, setSubmitLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -71,11 +84,13 @@ const Expenses = () => {
         supabase.from("flatmates").select("id, name").order("name"),
         supabase
           .from("expenses")
-          .select(`
+          .select(
+            `
             *,
             flatmates!expenses_paid_by_fkey (name),
             expense_splits (flatmate_id)
-          `)
+          `
+          )
           .order("date", { ascending: false }),
       ]);
 
@@ -95,13 +110,21 @@ const Expenses = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.title || !formData.amount || !formData.paidBy || formData.splitBetween.length === 0) {
+    if (
+      !formData.title ||
+      !formData.amount ||
+      !formData.paidBy ||
+      formData.splitBetween.length === 0
+    ) {
       toast.error("Please fill in all required fields");
       return;
     }
 
+    setSubmitLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
       if (editingExpense) {
@@ -119,15 +142,20 @@ const Expenses = () => {
         if (expenseError) throw expenseError;
 
         // Delete old splits
-        await supabase.from("expense_splits").delete().eq("expense_id", editingExpense.id);
+        await supabase
+          .from("expense_splits")
+          .delete()
+          .eq("expense_id", editingExpense.id);
 
         // Insert new splits
-        const { error: splitsError } = await supabase.from("expense_splits").insert(
-          formData.splitBetween.map((flatmateId) => ({
-            expense_id: editingExpense.id,
-            flatmate_id: flatmateId,
-          }))
-        );
+        const { error: splitsError } = await supabase
+          .from("expense_splits")
+          .insert(
+            formData.splitBetween.map((flatmateId) => ({
+              expense_id: editingExpense.id,
+              flatmate_id: flatmateId,
+            }))
+          );
 
         if (splitsError) throw splitsError;
         toast.success("Expense updated successfully");
@@ -148,12 +176,14 @@ const Expenses = () => {
         if (expenseError) throw expenseError;
 
         // Insert splits
-        const { error: splitsError } = await supabase.from("expense_splits").insert(
-          formData.splitBetween.map((flatmateId) => ({
-            expense_id: expenseData.id,
-            flatmate_id: flatmateId,
-          }))
-        );
+        const { error: splitsError } = await supabase
+          .from("expense_splits")
+          .insert(
+            formData.splitBetween.map((flatmateId) => ({
+              expense_id: expenseData.id,
+              flatmate_id: flatmateId,
+            }))
+          );
 
         if (splitsError) throw splitsError;
         toast.success("Expense added successfully");
@@ -165,6 +195,8 @@ const Expenses = () => {
     } catch (error: any) {
       toast.error(error.message);
       console.error(error);
+    } finally {
+      setSubmitLoading(false);
     }
   };
 
@@ -183,6 +215,7 @@ const Expenses = () => {
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this expense?")) return;
 
+    setDeleteLoading(id);
     try {
       const { error } = await supabase.from("expenses").delete().eq("id", id);
       if (error) throw error;
@@ -191,6 +224,8 @@ const Expenses = () => {
     } catch (error: any) {
       toast.error(error.message);
       console.error(error);
+    } finally {
+      setDeleteLoading(null);
     }
   };
 
@@ -227,7 +262,9 @@ const Expenses = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-4xl font-bold gradient-text mb-2">Expenses</h1>
-          <p className="text-muted-foreground">Track and manage all your shared expenses</p>
+          <p className="text-muted-foreground">
+            Track and manage all your shared expenses
+          </p>
         </div>
         <Dialog
           open={dialogOpen}
@@ -247,9 +284,13 @@ const Expenses = () => {
           </DialogTrigger>
           <DialogContent className="glass-card border-border/50 max-w-md max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingExpense ? "Edit Expense" : "Add New Expense"}</DialogTitle>
+              <DialogTitle>
+                {editingExpense ? "Edit Expense" : "Add New Expense"}
+              </DialogTitle>
               <DialogDescription>
-                {editingExpense ? "Update expense details" : "Create a new shared expense"}
+                {editingExpense
+                  ? "Update expense details"
+                  : "Create a new shared expense"}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -258,13 +299,15 @@ const Expenses = () => {
                 <Input
                   id="title"
                   value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, title: e.target.value })
+                  }
                   placeholder="Groceries, Rent, Utilities..."
                   className="bg-secondary/50"
                   required
                 />
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="amount">Amount *</Label>
                 <Input
@@ -272,7 +315,9 @@ const Expenses = () => {
                   type="number"
                   step="0.01"
                   value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, amount: e.target.value })
+                  }
                   placeholder="0.00"
                   className="bg-secondary/50"
                   required
@@ -291,14 +336,21 @@ const Expenses = () => {
                       )}
                     >
                       <CalendarIcon className="mr-2 h-4 w-4" />
-                      {formData.date ? format(formData.date, "PPP") : "Pick a date"}
+                      {formData.date
+                        ? format(formData.date, "PPP")
+                        : "Pick a date"}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0 glass-card pointer-events-auto" align="start">
+                  <PopoverContent
+                    className="w-auto p-0 glass-card pointer-events-auto"
+                    align="start"
+                  >
                     <Calendar
                       mode="single"
                       selected={formData.date}
-                      onSelect={(date) => date && setFormData({ ...formData, date })}
+                      onSelect={(date) =>
+                        date && setFormData({ ...formData, date })
+                      }
                       initialFocus
                       className="pointer-events-auto"
                     />
@@ -308,7 +360,12 @@ const Expenses = () => {
 
               <div className="space-y-2">
                 <Label htmlFor="paidBy">Paid By *</Label>
-                <Select value={formData.paidBy} onValueChange={(value) => setFormData({ ...formData, paidBy: value })}>
+                <Select
+                  value={formData.paidBy}
+                  onValueChange={(value) =>
+                    setFormData({ ...formData, paidBy: value })
+                  }
+                >
                   <SelectTrigger className="bg-secondary/50">
                     <SelectValue placeholder="Select who paid" />
                   </SelectTrigger>
@@ -326,7 +383,10 @@ const Expenses = () => {
                 <Label>Split Between * (select all involved)</Label>
                 <div className="space-y-2 max-h-40 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
                   {flatmates.map((flatmate) => (
-                    <div key={flatmate.id} className="flex items-center space-x-2">
+                    <div
+                      key={flatmate.id}
+                      className="flex items-center space-x-2"
+                    >
                       <Checkbox
                         id={`split-${flatmate.id}`}
                         checked={formData.splitBetween.includes(flatmate.id)}
@@ -343,8 +403,21 @@ const Expenses = () => {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full bg-gradient-to-r from-primary to-blue-500">
-                {editingExpense ? "Update Expense" : "Add Expense"}
+              <Button
+                type="submit"
+                className="w-full bg-gradient-to-r from-primary to-blue-500"
+                disabled={submitLoading}
+              >
+                {submitLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    {editingExpense ? "Updating..." : "Adding..."}
+                  </>
+                ) : editingExpense ? (
+                  "Update Expense"
+                ) : (
+                  "Add Expense"
+                )}
               </Button>
             </form>
           </DialogContent>
@@ -358,7 +431,10 @@ const Expenses = () => {
             <p className="text-muted-foreground mb-4">
               Please add flatmates first before creating expenses
             </p>
-            <Button variant="outline" onClick={() => window.location.href = "/dashboard"}>
+            <Button
+              variant="outline"
+              onClick={() => (window.location.href = "/dashboard")}
+            >
               Go to Dashboard
             </Button>
           </CardContent>
@@ -375,7 +451,9 @@ const Expenses = () => {
             {expenses.length === 0 ? (
               <div className="text-center py-12">
                 <Receipt className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-4">No expenses recorded yet</p>
+                <p className="text-muted-foreground mb-4">
+                  No expenses recorded yet
+                </p>
                 <Button
                   onClick={() => setDialogOpen(true)}
                   variant="outline"
@@ -403,17 +481,25 @@ const Expenses = () => {
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h3 className="font-semibold text-lg truncate">{expense.title}</h3>
+                                <h3 className="font-semibold text-lg truncate">
+                                  {expense.title}
+                                </h3>
                                 <span className="text-sm text-muted-foreground whitespace-nowrap">
-                                  {format(new Date(expense.date), "MMM dd, yyyy")}
+                                  {format(
+                                    new Date(expense.date),
+                                    "MMM dd, yyyy"
+                                  )}
                                 </span>
                               </div>
                               <p className="text-sm text-muted-foreground">
-                                Paid by <span className="text-foreground font-medium">{expense.flatmates.name}</span>
+                                Paid by{" "}
+                                <span className="text-foreground font-medium">
+                                  {expense.flatmates.name}
+                                </span>
                                 {" • "}
-                                Split between {splitCount} {splitCount === 1 ? "person" : "people"}
-                                {" • "}
-                                ${sharePerPerson.toFixed(2)} each
+                                Split between {splitCount}{" "}
+                                {splitCount === 1 ? "person" : "people"}
+                                {" • "}${sharePerPerson.toFixed(2)} each
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -434,8 +520,13 @@ const Expenses = () => {
                                   size="icon"
                                   onClick={() => handleDelete(expense.id)}
                                   className="hover:bg-destructive/10 hover:text-destructive"
+                                  disabled={deleteLoading === expense.id}
                                 >
-                                  <Trash2 className="w-4 h-4" />
+                                  {deleteLoading === expense.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-4 h-4" />
+                                  )}
                                 </Button>
                               </div>
                             </div>
