@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 
 interface Flatmate {
   id: string;
@@ -59,6 +60,7 @@ interface Expense {
 }
 
 const Expenses = () => {
+  const { selectedSplitSpace, splitSpaces, loading: contextLoading } = useSplitSpace();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,11 +76,8 @@ const Expenses = () => {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchDataWithoutSplitSpace = async () => {
+    setLoading(true);
     try {
       const [flatmatesRes, expensesRes] = await Promise.all([
         supabase.from("flatmates").select("id, name").order("name"),
@@ -100,8 +99,149 @@ const Expenses = () => {
       setFlatmates(flatmatesRes.data || []);
       setExpenses(expensesRes.data || []);
     } catch (error: any) {
+      console.error("Error fetching data:", error);
       toast.error("Error fetching data");
-      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Wait for context to finish loading
+    if (contextLoading) {
+      console.log("Expenses: Context still loading, waiting...");
+      return;
+    }
+    
+    console.log("Expenses: Context loaded. SplitSpaces:", splitSpaces.length, "Selected:", selectedSplitSpace?.name);
+    
+    // If no split spaces exist (migrations not run), fetch without filter
+    if (splitSpaces.length === 0) {
+      console.log("Expenses: No split spaces, fetching without filter");
+      fetchDataWithoutSplitSpace();
+    } else if (selectedSplitSpace) {
+      console.log("Expenses: Fetching with SplitSpace:", selectedSplitSpace.name);
+      fetchData();
+    } else {
+      console.log("Expenses: No SplitSpace selected, fetching without filter as fallback");
+      fetchDataWithoutSplitSpace();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSplitSpace?.id, splitSpaces.length, contextLoading]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      console.log("Expenses: fetchData called. SplitSpace:", selectedSplitSpace?.id);
+      
+      // Try to fetch with split_space_id filter if available
+      let flatmatesRes, expensesRes;
+      
+      if (selectedSplitSpace) {
+        try {
+          [flatmatesRes, expensesRes] = await Promise.all([
+            supabase
+              .from("flatmates")
+              .select("id, name")
+              .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
+              .order("name"),
+            supabase
+              .from("expenses")
+              .select(
+                `
+                *,
+                flatmates!expenses_paid_by_fkey (name),
+                expense_splits (flatmate_id)
+              `
+              )
+              .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
+              .order("date", { ascending: false }),
+          ]);
+        } catch (queryError: any) {
+          // If query syntax error, try without the or filter
+          console.warn("Expenses: Query with split_space_id failed, trying without filter:", queryError);
+          [flatmatesRes, expensesRes] = await Promise.all([
+            supabase
+              .from("flatmates")
+              .select("id, name")
+              .order("name"),
+            supabase
+              .from("expenses")
+              .select(
+                `
+                *,
+                flatmates!expenses_paid_by_fkey (name),
+                expense_splits (flatmate_id)
+              `
+              )
+              .order("date", { ascending: false }),
+          ]);
+        }
+      } else {
+        // No split space, fetch all
+        [flatmatesRes, expensesRes] = await Promise.all([
+          supabase
+            .from("flatmates")
+            .select("id, name")
+            .order("name"),
+          supabase
+            .from("expenses")
+            .select(
+              `
+              *,
+              flatmates!expenses_paid_by_fkey (name),
+              expense_splits (flatmate_id)
+            `
+            )
+            .order("date", { ascending: false }),
+        ]);
+      }
+
+      if (flatmatesRes.error) {
+        console.error("Flatmates error:", flatmatesRes.error);
+        // If it's a column error, try without filter
+        if (flatmatesRes.error.message?.includes("column") || flatmatesRes.error.code === "42703") {
+          const { data, error } = await supabase
+            .from("flatmates")
+            .select("id, name")
+            .order("name");
+          if (error) throw error;
+          setFlatmates(data || []);
+        } else {
+          throw flatmatesRes.error;
+        }
+      } else {
+        setFlatmates(flatmatesRes.data || []);
+      }
+
+      if (expensesRes.error) {
+        console.error("Expenses error:", expensesRes.error);
+        // If it's a column error, try without filter
+        if (expensesRes.error.message?.includes("column") || expensesRes.error.code === "42703") {
+          const { data, error } = await supabase
+            .from("expenses")
+            .select(
+              `
+              *,
+              flatmates!expenses_paid_by_fkey (name),
+              expense_splits (flatmate_id)
+            `
+            )
+            .order("date", { ascending: false });
+          if (error) throw error;
+          setExpenses(data || []);
+        } else {
+          throw expensesRes.error;
+        }
+      } else {
+        setExpenses(expensesRes.data || []);
+      }
+
+      console.log("Flatmates fetched:", flatmatesRes.data?.length || 0);
+      console.log("Expenses fetched:", expensesRes.data?.length || 0);
+    } catch (error: any) {
+      console.error("Error fetching data:", error);
+      toast.error(`Error fetching data: ${error.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -161,15 +301,22 @@ const Expenses = () => {
         toast.success("Expense updated successfully");
       } else {
         // Create new expense
+        const expenseDataToInsert: any = {
+          title: formData.title,
+          amount: parseFloat(formData.amount),
+          date: format(formData.date, "yyyy-MM-dd"),
+          paid_by: formData.paidBy,
+          created_by: user.id,
+        };
+
+        // Only add split_space_id if it exists and is selected
+        if (selectedSplitSpace) {
+          expenseDataToInsert.split_space_id = selectedSplitSpace.id;
+        }
+
         const { data: expenseData, error: expenseError } = await supabase
           .from("expenses")
-          .insert({
-            title: formData.title,
-            amount: parseFloat(formData.amount),
-            date: format(formData.date, "yyyy-MM-dd"),
-            paid_by: formData.paidBy,
-            created_by: user.id,
-          })
+          .insert(expenseDataToInsert)
           .select()
           .single();
 
@@ -249,6 +396,17 @@ const Expenses = () => {
     }));
   };
 
+  // Allow page to work even if SplitSpaces feature isn't fully set up
+  if (!selectedSplitSpace && splitSpaces.length > 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <p className="text-muted-foreground">Please select a SplitSpace to continue.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -265,6 +423,9 @@ const Expenses = () => {
           <p className="text-muted-foreground">
             Track and manage all your shared expenses
           </p>
+          {selectedSplitSpace && (
+            <p className="text-sm text-muted-foreground mt-1">SplitSpace: {selectedSplitSpace.name}</p>
+          )}
         </div>
         <Dialog
           open={dialogOpen}

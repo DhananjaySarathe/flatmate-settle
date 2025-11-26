@@ -7,7 +7,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { CalendarIcon, Loader2, Receipt, Download, Mail } from "lucide-react";
+import {
+  CalendarIcon,
+  Loader2,
+  Receipt,
+  Download,
+  Mail,
+  Copy,
+  Check,
+} from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,6 +23,7 @@ import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import EmailReportDialog from "@/components/EmailReportDialog";
+import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 
 interface Flatmate {
   id: string;
@@ -46,6 +55,11 @@ interface Settlement {
 }
 
 export default function Reports() {
+  const {
+    selectedSplitSpace,
+    splitSpaces,
+    loading: contextLoading,
+  } = useSplitSpace();
   const [loading, setLoading] = useState(true);
   const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -59,8 +73,11 @@ export default function Reports() {
     "summary" | "all-expenses" | null
   >(null);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [copiedSettlement, setCopiedSettlement] = useState(false);
+  const [copiedExpenses, setCopiedExpenses] = useState(false);
 
-  const fetchData = async () => {
+  const fetchDataWithoutSplitSpace = async () => {
+    setLoading(true);
     try {
       const { data: flatmatesData, error: flatmatesError } = await supabase
         .from("flatmates")
@@ -87,17 +104,140 @@ export default function Reports() {
 
       setFlatmates(flatmatesData || []);
       setExpenses(expensesData || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching data:", error);
-      toast.error("Failed to fetch data");
+      toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchData = async () => {
+    if (!selectedSplitSpace) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      console.log(
+        "Reports: Fetching data for SplitSpace:",
+        selectedSplitSpace.id
+      );
+      // Query that handles both migrated and unmigrated data
+      const flatmatesQuery = supabase
+        .from("flatmates")
+        .select("id, name, email")
+        .order("name");
+
+      // If split_space_id column exists, filter by it or allow NULL
+      const { data: flatmatesData, error: flatmatesError } =
+        await flatmatesQuery.or(
+          `split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`
+        );
+
+      if (flatmatesError) {
+        // If error is about column not existing, try without filter
+        if (
+          flatmatesError.message?.includes("column") ||
+          flatmatesError.code === "42703"
+        ) {
+          const { data, error } = await supabase
+            .from("flatmates")
+            .select("id, name, email")
+            .order("name");
+          if (error) throw error;
+          setFlatmates(data || []);
+        } else {
+          throw flatmatesError;
+        }
+      } else {
+        setFlatmates(flatmatesData || []);
+      }
+
+      const expensesQuery = supabase
+        .from("expenses")
+        .select(
+          `
+          *,
+          expense_splits (
+            flatmate_id
+          )
+        `
+        )
+        .gte("date", dateRange.from.toISOString().split("T")[0])
+        .lte("date", dateRange.to.toISOString().split("T")[0])
+        .order("date", { ascending: false });
+
+      const { data: expensesData, error: expensesError } =
+        await expensesQuery.or(
+          `split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`
+        );
+
+      if (expensesError) {
+        // If error is about column not existing, try without filter
+        if (
+          expensesError.message?.includes("column") ||
+          expensesError.code === "42703"
+        ) {
+          const { data, error } = await supabase
+            .from("expenses")
+            .select(
+              `
+              *,
+              expense_splits (
+                flatmate_id
+              )
+            `
+            )
+            .gte("date", dateRange.from.toISOString().split("T")[0])
+            .lte("date", dateRange.to.toISOString().split("T")[0])
+            .order("date", { ascending: false });
+          if (error) throw error;
+          setExpenses(data || []);
+        } else {
+          throw expensesError;
+        }
+      } else {
+        setExpenses(expensesData || []);
+      }
+    } catch (error: any) {
+      console.error("Error fetching data:", error);
+      toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchData();
-  }, [dateRange]);
+    // Wait for context to finish loading
+    if (contextLoading) {
+      console.log("Reports: Context still loading, waiting...");
+      return;
+    }
+
+    console.log(
+      "Reports: Context loaded. SplitSpaces:",
+      splitSpaces.length,
+      "Selected:",
+      selectedSplitSpace?.name
+    );
+
+    // If no split spaces exist (migrations not run), fetch without filter
+    if (splitSpaces.length === 0) {
+      console.log("Reports: No split spaces, fetching without filter");
+      fetchDataWithoutSplitSpace();
+    } else if (selectedSplitSpace) {
+      console.log(
+        "Reports: Fetching with SplitSpace:",
+        selectedSplitSpace.name
+      );
+      fetchData();
+    } else {
+      console.log("Reports: No SplitSpace selected, setting loading to false");
+      setLoading(false);
+    }
+  }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
 
   useEffect(() => {
     if (flatmates.length > 0 && expenses.length > 0) {
@@ -191,6 +331,123 @@ export default function Reports() {
     setSettlements(settlements);
   };
 
+  const copySettlementSummary = async () => {
+    if (settlements.length === 0) {
+      toast.error("No settlements to copy");
+      return;
+    }
+
+    let text = `SETTLEMENT SUMMARY\n`;
+    text += `Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
+      dateRange.to,
+      "MMM dd, yyyy"
+    )}\n\n`;
+
+    if (selectedSplitSpace) {
+      text += `SplitSpace: ${selectedSplitSpace.name}\n\n`;
+    }
+
+    text += `Settlements:\n`;
+    text += `${"=".repeat(50)}\n`;
+
+    settlements.forEach((settlement, index) => {
+      text += `${index + 1}. ${settlement.from} owes ${
+        settlement.to
+      }: ₹${settlement.amount.toFixed(2)}\n`;
+    });
+
+    text += `\n${"=".repeat(50)}\n`;
+    text += `Total Settlements: ${settlements.length} transaction${
+      settlements.length !== 1 ? "s" : ""
+    }\n`;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedSettlement(true);
+      toast.success("Settlement summary copied to clipboard!");
+      setTimeout(() => setCopiedSettlement(false), 2000);
+    } catch (error) {
+      console.error("Failed to copy:", error);
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
+  const copyAllExpenses = async () => {
+    if (expenses.length === 0) {
+      toast.error("No expenses to copy");
+      return;
+    }
+
+    // Group expenses by user (who paid)
+    const expensesByUser = new Map<
+      string,
+      { name: string; expenses: typeof expenses }
+    >();
+
+    flatmates.forEach((flatmate) => {
+      expensesByUser.set(flatmate.id, {
+        name: flatmate.name,
+        expenses: expenses.filter((exp) => exp.paid_by === flatmate.id),
+      });
+    });
+
+    let text = `ALL EXPENSES - USER WISE\n`;
+    text += `Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
+      dateRange.to,
+      "MMM dd, yyyy"
+    )}\n\n`;
+
+    if (selectedSplitSpace) {
+      text += `SplitSpace: ${selectedSplitSpace.name}\n\n`;
+    }
+
+    expensesByUser.forEach((userData, userId) => {
+      if (userData.expenses.length === 0) return;
+
+      text += `${"=".repeat(50)}\n`;
+      text += `${userData.name.toUpperCase()}\n`;
+      text += `${"=".repeat(50)}\n\n`;
+
+      let userTotal = 0;
+      userData.expenses.forEach((expense) => {
+        const splitAmount = expense.amount / expense.expense_splits.length;
+        const splitWith = expense.expense_splits
+          .map((split) => {
+            const flatmate = flatmates.find((f) => f.id === split.flatmate_id);
+            return flatmate?.name || "Unknown";
+          })
+          .join(", ");
+
+        text += `• ${expense.title}\n`;
+        text += `  Date: ${format(new Date(expense.date), "MMM dd, yyyy")}\n`;
+        text += `  Amount: ₹${expense.amount.toFixed(2)}\n`;
+        text += `  Split with: ${splitWith}\n`;
+        text += `  Per person: ₹${splitAmount.toFixed(2)}\n`;
+        text += `\n`;
+
+        userTotal += expense.amount;
+      });
+
+      text += `Total paid by ${userData.name}: ₹${userTotal.toFixed(2)}\n\n`;
+    });
+
+    text += `${"=".repeat(50)}\n`;
+    text += `Grand Total: ₹${expenses
+      .reduce((sum, exp) => sum + exp.amount, 0)
+      .toFixed(2)}\n`;
+    text += `Total Expenses: ${expenses.length}\n`;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedExpenses(true);
+      toast.success("All expenses copied to clipboard!");
+      setTimeout(() => setCopiedExpenses(false), 2000);
+    } catch (error) {
+      console.error("Failed to copy:", error);
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
   const generateAllExpensesPDF = async () => {
     setPdfLoading("all-expenses");
     try {
@@ -204,6 +461,13 @@ export default function Reports() {
       doc.setTextColor(255, 255, 255);
       doc.setFont(undefined, "bold");
       doc.text("FLATSHARE EXPENSES REPORT", 14, 20);
+
+      if (selectedSplitSpace) {
+        doc.setFontSize(12);
+        doc.setTextColor(255, 255, 255);
+        doc.setFont(undefined, "normal");
+        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 26);
+      }
 
       // Reset font
       doc.setFont(undefined, "normal");
@@ -342,6 +606,13 @@ export default function Reports() {
       doc.setTextColor(255, 255, 255);
       doc.setFont(undefined, "bold");
       doc.text("FLATSHARE SETTLEMENT REPORT", 14, 20);
+
+      if (selectedSplitSpace) {
+        doc.setFontSize(12);
+        doc.setTextColor(255, 255, 255);
+        doc.setFont(undefined, "normal");
+        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 26);
+      }
 
       // Reset font
       doc.setFont(undefined, "normal");
@@ -728,6 +999,19 @@ export default function Reports() {
     }
   };
 
+  // Allow page to work even if SplitSpaces feature isn't fully set up
+  if (!selectedSplitSpace && splitSpaces.length > 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <p className="text-muted-foreground">
+            Please select a SplitSpace to continue.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -737,9 +1021,17 @@ export default function Reports() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Reports</h1>
+    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
+          {selectedSplitSpace && (
+            <p className="text-sm sm:text-base text-muted-foreground mt-1">
+              <span className="hidden sm:inline">SplitSpace: </span>
+              {selectedSplitSpace.name}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Date Range Selector */}
@@ -748,22 +1040,29 @@ export default function Reports() {
           <CardTitle>Select Date Range</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-4 items-center">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
                   className={cn(
-                    "w-[240px] justify-start text-left font-normal",
+                    "w-full sm:w-[240px] justify-start text-left font-normal",
                     !dateRange.from && "text-muted-foreground"
                   )}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {dateRange.from ? (
-                    format(dateRange.from, "PPP")
-                  ) : (
-                    <span>Pick start date</span>
-                  )}
+                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="truncate">
+                    {dateRange.from ? (
+                      format(dateRange.from, "PPP")
+                    ) : (
+                      <span className="hidden sm:inline">Pick start date</span>
+                    )}
+                    {dateRange.from && (
+                      <span className="sm:hidden">
+                        {format(dateRange.from, "MMM dd")}
+                      </span>
+                    )}
+                  </span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -778,23 +1077,35 @@ export default function Reports() {
               </PopoverContent>
             </Popover>
 
-            <span className="text-muted-foreground">to</span>
+            <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
+              to
+            </span>
+            <span className="text-muted-foreground text-center sm:hidden">
+              ↓
+            </span>
 
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
                   className={cn(
-                    "w-[240px] justify-start text-left font-normal",
+                    "w-full sm:w-[240px] justify-start text-left font-normal",
                     !dateRange.to && "text-muted-foreground"
                   )}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {dateRange.to ? (
-                    format(dateRange.to, "PPP")
-                  ) : (
-                    <span>Pick end date</span>
-                  )}
+                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                  <span className="truncate">
+                    {dateRange.to ? (
+                      format(dateRange.to, "PPP")
+                    ) : (
+                      <span className="hidden sm:inline">Pick end date</span>
+                    )}
+                    {dateRange.to && (
+                      <span className="sm:hidden">
+                        {format(dateRange.to, "MMM dd")}
+                      </span>
+                    )}
+                  </span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -809,6 +1120,55 @@ export default function Reports() {
               </PopoverContent>
             </Popover>
           </div>
+
+          {/* Copy Buttons */}
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4">
+            <Button
+              variant="outline"
+              onClick={copySettlementSummary}
+              disabled={settlements.length === 0}
+              className="flex items-center justify-center gap-2 w-full sm:w-auto"
+            >
+              {copiedSettlement ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  <span className="sm:hidden">Copied!</span>
+                  <span className="hidden sm:inline">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4" />
+                  <span className="sm:hidden">Copy Summary</span>
+                  <span className="hidden sm:inline">
+                    Copy Settlement Summary
+                  </span>
+                </>
+              )}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={copyAllExpenses}
+              disabled={expenses.length === 0}
+              className="flex items-center justify-center gap-2 w-full sm:w-auto"
+            >
+              {copiedExpenses ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  <span className="sm:hidden">Copied!</span>
+                  <span className="hidden sm:inline">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4" />
+                  <span className="sm:hidden">Copy Expenses</span>
+                  <span className="hidden sm:inline">
+                    Copy All Expense Splitting
+                  </span>
+                </>
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -817,14 +1177,21 @@ export default function Reports() {
         {/* All Expenses Report */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5" />
-              All Expenses
+            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
+              <span className="hidden sm:inline">All Expenses</span>
+              <span className="sm:hidden">Expenses</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Download a detailed report of all expenses in the selected period.
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              <span className="hidden sm:inline">
+                Download a detailed report of all expenses in the selected
+                period.
+              </span>
+              <span className="sm:hidden">
+                Download detailed expense report.
+              </span>
             </p>
             <Button
               onClick={generateAllExpensesPDF}
@@ -834,12 +1201,14 @@ export default function Reports() {
               {pdfLoading === "all-expenses" ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Generating...
+                  <span className="hidden sm:inline">Generating...</span>
+                  <span className="sm:hidden">Generating</span>
                 </>
               ) : (
                 <>
                   <Download className="mr-2 h-4 w-4" />
-                  Download PDF
+                  <span className="hidden sm:inline">Download PDF</span>
+                  <span className="sm:hidden">Download</span>
                 </>
               )}
             </Button>
@@ -849,41 +1218,49 @@ export default function Reports() {
         {/* Balance Summary Report */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5" />
-              Balance Summary
+            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
+              <span className="hidden sm:inline">Balance Summary</span>
+              <span className="sm:hidden">Summary</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Download settlement summary with balances and transaction details.
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              <span className="hidden sm:inline">
+                Download settlement summary with balances and transaction
+                details.
+              </span>
+              <span className="sm:hidden">Download settlement summary.</span>
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <Button
                 onClick={generateSummaryPDF}
                 disabled={pdfLoading === "summary"}
-                className="flex-1"
+                className="flex-1 w-full sm:w-auto"
               >
                 {pdfLoading === "summary" ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Generating...
+                    <span className="hidden sm:inline">Generating...</span>
+                    <span className="sm:hidden">Generating</span>
                   </>
                 ) : (
                   <>
                     <Download className="mr-2 h-4 w-4" />
-                    Download PDF
+                    <span className="hidden sm:inline">Download PDF</span>
+                    <span className="sm:hidden">Download</span>
                   </>
                 )}
               </Button>
-              <Button
+              {/* <Button
                 variant="outline"
                 onClick={() => setEmailDialogOpen(true)}
-                className="flex-1"
+                className="flex-1 w-full sm:w-auto"
               >
                 <Mail className="mr-2 h-4 w-4" />
-                Send via Email
-              </Button>
+                <span className="hidden sm:inline">Send via Email</span>
+                <span className="sm:hidden">Email</span>
+              </Button> */}
             </div>
           </CardContent>
         </Card>
@@ -893,36 +1270,68 @@ export default function Reports() {
       {balances.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Balance Summary</CardTitle>
+            <CardTitle className="text-lg sm:text-xl">
+              Balance Summary
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
+            <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+              <table className="w-full border-collapse min-w-[600px] sm:min-w-0">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left p-2">Name</th>
-                    <th className="text-right p-2">Total Paid</th>
-                    <th className="text-right p-2">Total Owed</th>
-                    <th className="text-right p-2">Net Balance</th>
-                    <th className="text-center p-2">Status</th>
+                    <th className="text-left p-2 text-xs sm:text-sm">Name</th>
+                    <th className="text-right p-2 text-xs sm:text-sm">
+                      <span className="hidden sm:inline">Total Paid</span>
+                      <span className="sm:hidden">Paid</span>
+                    </th>
+                    <th className="text-right p-2 text-xs sm:text-sm">
+                      <span className="hidden sm:inline">Total Owed</span>
+                      <span className="sm:hidden">Owed</span>
+                    </th>
+                    <th className="text-right p-2 text-xs sm:text-sm">
+                      <span className="hidden sm:inline">Net Balance</span>
+                      <span className="sm:hidden">Balance</span>
+                    </th>
+                    <th className="text-center p-2 text-xs sm:text-sm">
+                      Status
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {balances.map((balance) => (
                     <tr key={balance.id} className="border-b">
-                      <td className="p-2 font-medium">{balance.name}</td>
-                      <td className="p-2 text-right">
-                        ${balance.totalPaid.toFixed(2)}
+                      <td className="p-2 font-medium text-sm sm:text-base">
+                        {balance.name}
                       </td>
-                      <td className="p-2 text-right">
-                        ${balance.totalOwed.toFixed(2)}
+                      <td className="p-2 text-right text-sm sm:text-base">
+                        <span className="hidden sm:inline">
+                          ₹{balance.totalPaid.toFixed(2)}
+                        </span>
+                        <span className="sm:hidden">
+                          ₹{balance.totalPaid.toFixed(0)}
+                        </span>
                       </td>
-                      <td className="p-2 text-right font-bold">
-                        {balance.balance >= 0
-                          ? `+$${balance.balance.toFixed(2)}`
-                          : `-$${Math.abs(balance.balance).toFixed(2)}`}
+                      <td className="p-2 text-right text-sm sm:text-base">
+                        <span className="hidden sm:inline">
+                          ₹{balance.totalOwed.toFixed(2)}
+                        </span>
+                        <span className="sm:hidden">
+                          ₹{balance.totalOwed.toFixed(0)}
+                        </span>
                       </td>
-                      <td className="p-2 text-center">
+                      <td className="p-2 text-right font-semibold text-sm sm:text-base">
+                        <span className="hidden sm:inline">
+                          {balance.balance >= 0
+                            ? `+₹${balance.balance.toFixed(2)}`
+                            : `-₹${Math.abs(balance.balance).toFixed(2)}`}
+                        </span>
+                        <span className="sm:hidden">
+                          {balance.balance >= 0
+                            ? `+₹${balance.balance.toFixed(0)}`
+                            : `-₹${Math.abs(balance.balance).toFixed(0)}`}
+                        </span>
+                      </td>
+                      <td className="p-2 text-center text-xs sm:text-sm">
                         <span
                           className={`px-2 py-1 rounded text-xs font-medium ${
                             balance.balance > 0
@@ -952,34 +1361,52 @@ export default function Reports() {
       {settlements.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Settlement Instructions</CardTitle>
+            <CardTitle className="text-lg sm:text-xl">
+              Settlement Instructions
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {settlements.map((settlement, index) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between p-4 bg-green-50 rounded-lg border border-green-200"
+                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 bg-green-50 rounded-lg border border-green-200 gap-2 sm:gap-0"
                 >
-                  <div className="flex items-center gap-4">
-                    <span className="font-bold text-green-800">
+                  <div className="flex items-center gap-2 sm:gap-4">
+                    <span className="font-bold text-green-800 text-sm sm:text-base">
                       {index + 1}.
                     </span>
-                    <span className="text-green-800">{settlement.from}</span>
-                    <span className="text-green-600">→</span>
-                    <span className="text-green-800">{settlement.to}</span>
+                    <span className="text-green-800 text-sm sm:text-base">
+                      {settlement.from}
+                    </span>
+                    <span className="text-green-600 text-sm sm:text-base">
+                      →
+                    </span>
+                    <span className="text-green-800 text-sm sm:text-base">
+                      {settlement.to}
+                    </span>
                   </div>
-                  <span className="font-bold text-green-800">
-                    ${settlement.amount.toFixed(2)}
+                  <span className="font-bold text-green-800 text-sm sm:text-base">
+                    ₹{settlement.amount.toFixed(2)}
                   </span>
                 </div>
               ))}
-              <div className="mt-4 p-4 bg-green-100 rounded-lg">
-                <p className="font-bold text-green-800">
-                  Settlement Complete! Total transactions: {settlements.length}
+              <div className="mt-4 p-3 sm:p-4 bg-green-100 rounded-lg">
+                <p className="font-bold text-green-800 text-sm sm:text-base">
+                  <span className="hidden sm:inline">
+                    Settlement Complete! Total transactions:{" "}
+                    {settlements.length}
+                  </span>
+                  <span className="sm:hidden">
+                    Complete! {settlements.length} transaction
+                    {settlements.length !== 1 ? "s" : ""}
+                  </span>
                 </p>
-                <p className="text-green-700">
-                  Total amount to be transferred: $
+                <p className="text-green-700 text-xs sm:text-sm mt-1">
+                  <span className="hidden sm:inline">
+                    Total amount to be transferred: ₹
+                  </span>
+                  <span className="sm:hidden">Total: ₹</span>
                   {settlements.reduce((sum, s) => sum + s.amount, 0).toFixed(2)}
                 </p>
               </div>
@@ -992,11 +1419,18 @@ export default function Reports() {
       {settlements.length === 0 && balances.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>All Settled Up! 🎉</CardTitle>
+            <CardTitle className="text-lg sm:text-xl">
+              All Settled Up! 🎉
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-green-600">
-              No money needs to be transferred between flatmates.
+            <p className="text-green-600 text-sm sm:text-base">
+              <span className="hidden sm:inline">
+                No money needs to be transferred between flatmates.
+              </span>
+              <span className="sm:hidden">
+                All settled! No transfers needed.
+              </span>
             </p>
           </CardContent>
         </Card>

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { Plus, Users, Trash2, Edit, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 
 interface Flatmate {
   id: string;
@@ -24,6 +25,7 @@ interface Flatmate {
 }
 
 const Dashboard = () => {
+  const { selectedSplitSpace } = useSplitSpace();
   const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -34,17 +36,41 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchFlatmates();
-  }, []);
+  }, [selectedSplitSpace]);
 
   const fetchFlatmates = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("flatmates")
         .select("*")
         .order("created_at", { ascending: true });
 
-      if (error) throw error;
-      setFlatmates(data || []);
+      // If split_space_id column exists and we have a selected space, filter by it
+      if (selectedSplitSpace) {
+        try {
+          const { data, error } = await query
+            .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`);
+          if (error) throw error;
+          setFlatmates(data || []);
+        } catch (filterError: any) {
+          // If filter fails (column doesn't exist), try without filter
+          if (filterError.message?.includes("column") || filterError.code === "42703") {
+            const { data, error } = await supabase
+              .from("flatmates")
+              .select("*")
+              .order("created_at", { ascending: true });
+            if (error) throw error;
+            setFlatmates(data || []);
+          } else {
+            throw filterError;
+          }
+        }
+      } else {
+        // No split space selected, fetch all
+        const { data, error } = await query;
+        if (error) throw error;
+        setFlatmates(data || []);
+      }
     } catch (error: any) {
       toast.error("Error fetching flatmates");
       console.error(error);
@@ -81,12 +107,19 @@ const Dashboard = () => {
         if (error) throw error;
         toast.success("Flatmate updated successfully");
       } else {
-        const { error } = await supabase.from("flatmates").insert({
+        const flatmateDataToInsert: any = {
           name: formData.name,
           email: formData.email || null,
           phone: formData.phone || null,
           created_by: user.id,
-        });
+        };
+
+        // Only add split_space_id if it exists and is selected
+        if (selectedSplitSpace) {
+          flatmateDataToInsert.split_space_id = selectedSplitSpace.id;
+        }
+
+        const { error } = await supabase.from("flatmates").insert(flatmateDataToInsert);
 
         if (error) throw error;
         toast.success("Flatmate added successfully");
@@ -137,6 +170,8 @@ const Dashboard = () => {
     setEditingFlatmate(null);
   };
 
+  // Allow page to work even without SplitSpace selected (for backward compatibility)
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -153,6 +188,9 @@ const Dashboard = () => {
           <p className="text-muted-foreground">
             Manage your flatmates and view expense overview
           </p>
+          {selectedSplitSpace && (
+            <p className="text-sm text-muted-foreground mt-1">SplitSpace: {selectedSplitSpace.name}</p>
+          )}
         </div>
         <Dialog
           open={dialogOpen}

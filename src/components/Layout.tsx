@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { SplitSpaceSelector } from "@/components/SplitSpaceSelector";
 
 interface LayoutProps {
   children: ReactNode;
@@ -80,6 +81,11 @@ const Layout = ({ children }: LayoutProps) => {
             </span>
           </Link>
 
+          {/* SplitSpace Selector */}
+          <div className="hidden md:flex items-center">
+            <SplitSpaceSelector />
+          </div>
+
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-1">
             {navItems.map((item) => {
@@ -144,6 +150,9 @@ const Layout = ({ children }: LayoutProps) => {
               className="md:hidden border-t border-border/50 bg-card/95 backdrop-blur-xl overflow-hidden"
             >
               <nav className="flex flex-col p-4 space-y-2">
+                <div className="mb-2 pb-2 border-b">
+                  <SplitSpaceSelector />
+                </div>
                 {navItems.map((item) => {
                   const Icon = item.icon;
                   return (
