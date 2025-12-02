@@ -1,6 +1,6 @@
-# Split Pro - User Guide
+# ExpenseWaale - User Guide
 
-Welcome to **Split Pro**, your comprehensive expense splitting application! This guide will help you understand and use all the features to manage shared expenses with your flatmates, friends, or any group.
+Welcome to **ExpenseWaale**, your comprehensive expense splitting application! This guide will help you understand and use all the features to manage shared expenses with your flatmates, friends, or any group.
 
 ## Table of Contents
 

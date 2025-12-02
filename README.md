@@ -1,4 +1,4 @@
-# Split Pro - Developer Documentation
+# ExpenseWaale - Developer Documentation
 
 A modern expense splitting application built with React, TypeScript, and Supabase.
 

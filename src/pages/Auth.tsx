@@ -4,7 +4,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Loader2, Wallet } from "lucide-react";
@@ -20,7 +26,9 @@ const Auth = () => {
   useEffect(() => {
     // Check if user is already logged in
     const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (session) {
         navigate("/dashboard");
       }
@@ -30,7 +38,7 @@ const Auth = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!email || !password) {
       toast.error("Please fill in all fields");
       return;
@@ -51,7 +59,7 @@ const Auth = () => {
         });
 
         if (error) throw error;
-        
+
         toast.success("Welcome back!");
         navigate("/dashboard");
       } else {
@@ -67,7 +75,7 @@ const Auth = () => {
         });
 
         if (error) throw error;
-        
+
         toast.success("Account created successfully!");
         navigate("/dashboard");
       }
@@ -98,10 +106,12 @@ const Auth = () => {
               <Wallet className="w-8 h-8 text-white" />
             </motion.div>
             <CardTitle className="text-3xl font-bold gradient-text">
-              FlatShare Expenses
+              ExpenseWaale
             </CardTitle>
             <CardDescription className="text-muted-foreground">
-              {isLogin ? "Welcome back! Sign in to continue" : "Create an account to get started"}
+              {isLogin
+                ? "Welcome back! Sign in to continue"
+                : "Create an account to get started"}
             </CardDescription>
           </CardHeader>
 
@@ -172,7 +182,9 @@ const Auth = () => {
                 onClick={() => setIsLogin(!isLogin)}
                 className="text-sm text-muted-foreground hover:text-primary transition-colors"
               >
-                {isLogin ? "Don't have an account? " : "Already have an account? "}
+                {isLogin
+                  ? "Don't have an account? "
+                  : "Already have an account? "}
                 <span className="text-primary font-medium">
                   {isLogin ? "Sign Up" : "Sign In"}
                 </span>

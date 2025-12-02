@@ -81,7 +81,7 @@ const Layout = ({ children }: LayoutProps) => {
               <Wallet className="w-6 h-6 text-white" />
             </div>
             <span className="text-xl font-bold gradient-text hidden sm:inline">
-              FlatShare Expenses
+              ExpenseWaale
             </span>
           </Link>
 
