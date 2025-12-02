@@ -15,6 +15,10 @@ import {
   Mail,
   Copy,
   Check,
+  Filter,
+  ArrowUpDown,
+  X,
+  ChevronDown,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -28,6 +32,23 @@ import { PeopleFilters } from "@/components/PeopleFilters";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
+import { useReportFilters } from "@/hooks/useReportFilters";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Flatmate {
   id: string;
@@ -78,10 +99,15 @@ export default function Reports() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
-  const [dateRange, setDateRange] = useState({
-    from: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-    to: new Date(),
-  });
+  const {
+    dateRange,
+    peopleFilters,
+    categoryFilters,
+    setDateRange,
+    setPeopleFilters,
+    setCategoryFilters,
+    resetFilters,
+  } = useReportFilters();
   const [pdfLoading, setPdfLoading] = useState<
     "summary" | "all-expenses" | null
   >(null);
@@ -90,16 +116,16 @@ export default function Reports() {
   const [copiedExpenses, setCopiedExpenses] = useState(false);
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [peopleFilters, setPeopleFilters] = useState({
-    exactMatch: [] as string[],
-    anyMatch: [] as string[],
-    exclude: [] as string[],
-    paidBy: "",
-  });
-  const [categoryFilters, setCategoryFilters] = useState({
-    include: [] as string[],
-    exclude: [] as string[],
-  });
+  const [paidByFilter, setPaidByFilter] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<
+    | "date-desc"
+    | "date-asc"
+    | "amount-desc"
+    | "amount-asc"
+    | "title-asc"
+    | "title-desc"
+  >("date-desc");
+  const [filtersModalOpen, setFiltersModalOpen] = useState(false);
 
   const fetchDataWithoutSplitSpace = async () => {
     setLoading(true);
@@ -334,15 +360,23 @@ export default function Reports() {
         const expenseFlatmateIds = expense.expense_splits.map(
           (s) => s.flatmate_id
         );
-        return !peopleFilters.exclude.some((id) =>
-          expenseFlatmateIds.includes(id)
+        // Exclude if any excluded person is in the split OR paid for it
+        return !peopleFilters.exclude.some(
+          (id) => expenseFlatmateIds.includes(id) || expense.paid_by === id
         );
       });
     }
 
-    if (peopleFilters.paidBy) {
-      filteredExpenses = filteredExpenses.filter(
-        (expense) => expense.paid_by === peopleFilters.paidBy
+    if (peopleFilters.paidBy.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) =>
+        peopleFilters.paidBy.includes(expense.paid_by)
+      );
+    }
+
+    // Apply paidBy filter from transactions table
+    if (paidByFilter.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) =>
+        paidByFilter.includes(expense.paid_by)
       );
     }
 
@@ -365,8 +399,35 @@ export default function Reports() {
       });
     }
 
-    setExpenses(filteredExpenses);
-  }, [allExpenses, peopleFilters, categoryFilters]);
+    // Apply sorting
+    const sortedExpenses = [...filteredExpenses];
+    switch (sortBy) {
+      case "date-desc":
+        sortedExpenses.sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+        break;
+      case "date-asc":
+        sortedExpenses.sort(
+          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+        break;
+      case "amount-desc":
+        sortedExpenses.sort((a, b) => b.amount - a.amount);
+        break;
+      case "amount-asc":
+        sortedExpenses.sort((a, b) => a.amount - b.amount);
+        break;
+      case "title-asc":
+        sortedExpenses.sort((a, b) => a.title.localeCompare(b.title));
+        break;
+      case "title-desc":
+        sortedExpenses.sort((a, b) => b.title.localeCompare(a.title));
+        break;
+    }
+
+    setExpenses(sortedExpenses);
+  }, [allExpenses, peopleFilters, categoryFilters, paidByFilter, sortBy]);
 
   useEffect(() => {
     if (flatmates.length > 0 && expenses.length > 0) {
@@ -1163,114 +1224,191 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Filters Section */}
-      {flatmates.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <PeopleFilters
-            flatmates={flatmates}
-            onFiltersChange={setPeopleFilters}
-          />
-
-          {/* Category Filters */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Category Filters</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  Include Categories (Show only these)
-                </Label>
-                <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
-                  {categories.map((category) => (
-                    <div
-                      key={category.id}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        id={`include-${category.id}`}
-                        checked={categoryFilters.include.includes(category.id)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setCategoryFilters({
-                              ...categoryFilters,
-                              include: [
-                                ...categoryFilters.include,
-                                category.id,
-                              ],
-                            });
-                          } else {
-                            setCategoryFilters({
-                              ...categoryFilters,
-                              include: categoryFilters.include.filter(
-                                (id) => id !== category.id
-                              ),
-                            });
-                          }
-                        }}
-                      />
-                      <Label
-                        htmlFor={`include-${category.id}`}
-                        className="text-sm font-normal cursor-pointer flex-1"
-                      >
-                        {category.name}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  Exclude Categories (Hide these)
-                </Label>
-                <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
-                  {categories.map((category) => (
-                    <div
-                      key={category.id}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        id={`exclude-cat-${category.id}`}
-                        checked={categoryFilters.exclude.includes(category.id)}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setCategoryFilters({
-                              ...categoryFilters,
-                              exclude: [
-                                ...categoryFilters.exclude,
-                                category.id,
-                              ],
-                            });
-                          } else {
-                            setCategoryFilters({
-                              ...categoryFilters,
-                              exclude: categoryFilters.exclude.filter(
-                                (id) => id !== category.id
-                              ),
-                            });
-                          }
-                        }}
-                      />
-                      <Label
-                        htmlFor={`exclude-cat-${category.id}`}
-                        className="text-sm font-normal cursor-pointer flex-1"
-                      >
-                        {category.name}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
       {/* Date Range Selector */}
       <Card>
         <CardHeader>
-          <CardTitle>Select Date Range</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Select Date Range</CardTitle>
+            {flatmates.length > 0 && (
+              <Dialog
+                open={filtersModalOpen}
+                onOpenChange={setFiltersModalOpen}
+              >
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <Filter className="w-4 h-4" />
+                    Filters
+                    {(peopleFilters.exactMatch.length > 0 ||
+                      peopleFilters.anyMatch.length > 0 ||
+                      peopleFilters.exclude.length > 0 ||
+                      peopleFilters.paidBy.length > 0 ||
+                      categoryFilters.include.length > 0 ||
+                      categoryFilters.exclude.length > 0) && (
+                      <Badge
+                        variant="secondary"
+                        className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
+                      >
+                        {peopleFilters.exactMatch.length +
+                          peopleFilters.anyMatch.length +
+                          peopleFilters.exclude.length +
+                          peopleFilters.paidBy.length +
+                          categoryFilters.include.length +
+                          categoryFilters.exclude.length}
+                      </Badge>
+                    )}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Filter className="w-5 h-5" />
+                      Advanced Filters
+                    </DialogTitle>
+                    <DialogDescription>
+                      Filter expenses by people and categories to get precise
+                      reports
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-6 md:grid-cols-2 mt-4">
+                    <PeopleFilters
+                      flatmates={flatmates}
+                      onFiltersChange={setPeopleFilters}
+                    />
+
+                    {/* Category Filters */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">
+                          Category Filters
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium">
+                            Include Categories (Show only these)
+                          </Label>
+                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
+                            {categories.length === 0 ? (
+                              <p className="text-sm text-muted-foreground text-center py-4">
+                                No categories available
+                              </p>
+                            ) : (
+                              categories.map((category) => (
+                                <div
+                                  key={category.id}
+                                  className="flex items-center space-x-2"
+                                >
+                                  <Checkbox
+                                    id={`include-${category.id}`}
+                                    checked={categoryFilters.include.includes(
+                                      category.id
+                                    )}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          include: [
+                                            ...categoryFilters.include,
+                                            category.id,
+                                          ],
+                                        });
+                                      } else {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          include:
+                                            categoryFilters.include.filter(
+                                              (id) => id !== category.id
+                                            ),
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <Label
+                                    htmlFor={`include-${category.id}`}
+                                    className="text-sm font-normal cursor-pointer flex-1"
+                                  >
+                                    {category.name}
+                                  </Label>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        <Separator />
+
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium">
+                            Exclude Categories (Hide these)
+                          </Label>
+                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
+                            {categories.length === 0 ? (
+                              <p className="text-sm text-muted-foreground text-center py-4">
+                                No categories available
+                              </p>
+                            ) : (
+                              categories.map((category) => (
+                                <div
+                                  key={category.id}
+                                  className="flex items-center space-x-2"
+                                >
+                                  <Checkbox
+                                    id={`exclude-cat-${category.id}`}
+                                    checked={categoryFilters.exclude.includes(
+                                      category.id
+                                    )}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          exclude: [
+                                            ...categoryFilters.exclude,
+                                            category.id,
+                                          ],
+                                        });
+                                      } else {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          exclude:
+                                            categoryFilters.exclude.filter(
+                                              (id) => id !== category.id
+                                            ),
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <Label
+                                    htmlFor={`exclude-cat-${category.id}`}
+                                    className="text-sm font-normal cursor-pointer flex-1"
+                                  >
+                                    {category.name}
+                                  </Label>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        resetFilters();
+                      }}
+                    >
+                      <X className="w-4 h-4 mr-2" />
+                      Reset All Filters
+                    </Button>
+                    <Button onClick={() => setFiltersModalOpen(false)}>
+                      Apply Filters
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
@@ -1303,7 +1441,7 @@ export default function Reports() {
                   mode="single"
                   selected={dateRange.from}
                   onSelect={(date) =>
-                    date && setDateRange((prev) => ({ ...prev, from: date }))
+                    date && setDateRange({ ...dateRange, from: date })
                   }
                   initialFocus
                 />
@@ -1346,7 +1484,7 @@ export default function Reports() {
                   mode="single"
                   selected={dateRange.to}
                   onSelect={(date) =>
-                    date && setDateRange((prev) => ({ ...prev, to: date }))
+                    date && setDateRange({ ...dateRange, to: date })
                   }
                   initialFocus
                 />
@@ -1404,6 +1542,203 @@ export default function Reports() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Filtered Transactions List */}
+      {expenses.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="w-5 h-5" />
+                Filtered Transactions ({expenses.length})
+              </CardTitle>
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge variant="secondary">
+                  {format(dateRange.from, "MMM dd")} -{" "}
+                  {format(dateRange.to, "MMM dd")}
+                </Badge>
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium whitespace-nowrap">
+                    Sort By:
+                  </Label>
+                  <Select
+                    value={sortBy}
+                    onValueChange={(value: typeof sortBy) => setSortBy(value)}
+                  >
+                    <SelectTrigger className="h-8 w-[140px] text-xs">
+                      <div className="flex items-center gap-1">
+                        <ArrowUpDown className="w-3 h-3" />
+                        <SelectValue />
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
+                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
+                      <SelectItem value="amount-desc">Amount (High)</SelectItem>
+                      <SelectItem value="amount-asc">Amount (Low)</SelectItem>
+                      <SelectItem value="title-asc">Title (A-Z)</SelectItem>
+                      <SelectItem value="title-desc">Title (Z-A)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium whitespace-nowrap">
+                    Paid By:
+                  </Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs min-w-[120px] justify-between"
+                      >
+                        <span className="truncate">
+                          {paidByFilter.length === 0
+                            ? "All"
+                            : paidByFilter.length === 1
+                            ? flatmates.find((f) => f.id === paidByFilter[0])
+                                ?.name || "Selected"
+                            : `${paidByFilter.length} selected`}
+                        </span>
+                        <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-56 p-2" align="end">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between px-2 pb-1 border-b">
+                          <Label className="text-sm font-medium">
+                            Select People
+                          </Label>
+                          {paidByFilter.length > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-xs"
+                              onClick={() => {
+                                setPaidByFilter([]);
+                              }}
+                            >
+                              Clear
+                            </Button>
+                          )}
+                        </div>
+                        <div className="space-y-1 max-h-48 overflow-y-auto">
+                          {flatmates.map((flatmate) => (
+                            <div
+                              key={flatmate.id}
+                              className="flex items-center space-x-2 px-2 py-1 hover:bg-secondary/50 rounded"
+                            >
+                              <Checkbox
+                                id={`table-paidby-${flatmate.id}`}
+                                checked={paidByFilter.includes(flatmate.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setPaidByFilter([
+                                      ...paidByFilter,
+                                      flatmate.id,
+                                    ]);
+                                  } else {
+                                    setPaidByFilter(
+                                      paidByFilter.filter(
+                                        (id) => id !== flatmate.id
+                                      )
+                                    );
+                                  }
+                                }}
+                              />
+                              <Label
+                                htmlFor={`table-paidby-${flatmate.id}`}
+                                className="text-sm font-normal cursor-pointer flex-1"
+                              >
+                                {flatmate.name}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {expenses.map((expense) => {
+                const paidByFlatmate = flatmates.find(
+                  (f) => f.id === expense.paid_by
+                );
+                const splitCount = expense.expense_splits.length;
+                const sharePerPerson = expense.amount / splitCount;
+                const splitWith = expense.expense_splits
+                  .map((split) => {
+                    const flatmate = flatmates.find(
+                      (f) => f.id === split.flatmate_id
+                    );
+                    return flatmate?.name;
+                  })
+                  .filter(Boolean)
+                  .join(", ");
+
+                return (
+                  <div
+                    key={expense.id}
+                    className="p-3 bg-secondary/30 rounded-lg border border-border/50 hover:border-primary/30 transition-colors"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h3 className="font-semibold text-base">
+                            {expense.title}
+                          </h3>
+                          {expense.categories && (
+                            <Badge variant="secondary" className="text-xs">
+                              {expense.categories.name}
+                            </Badge>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {format(new Date(expense.date), "MMM dd, yyyy")}
+                          </span>
+                        </div>
+                        <div className="text-sm text-muted-foreground space-y-1">
+                          <p>
+                            Paid by{" "}
+                            <span className="font-medium text-foreground">
+                              {paidByFlatmate?.name || "Unknown"}
+                            </span>
+                          </p>
+                          <p>
+                            Split between {splitCount}{" "}
+                            {splitCount === 1 ? "person" : "people"}:{" "}
+                            {splitWith}
+                          </p>
+                          <p>${sharePerPerson.toFixed(2)} per person</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xl font-bold text-primary">
+                          ${expense.amount.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {expenses.length === 0 && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Receipt className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">
+              No expenses found matching the selected filters and date range.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Reports */}
       <div className="grid gap-6 md:grid-cols-2">

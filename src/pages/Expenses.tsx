@@ -566,7 +566,33 @@ const Expenses = () => {
               </div>
 
               <div className="space-y-2">
-                <Label>Split Between * (select all involved)</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Split Between * (select all involved)</Label>
+                  {flatmates.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        if (formData.splitBetween.length === flatmates.length) {
+                          // Deselect all
+                          setFormData({ ...formData, splitBetween: [] });
+                        } else {
+                          // Select all
+                          setFormData({
+                            ...formData,
+                            splitBetween: flatmates.map((f) => f.id),
+                          });
+                        }
+                      }}
+                    >
+                      {formData.splitBetween.length === flatmates.length
+                        ? "Deselect All"
+                        : "Select All"}
+                    </Button>
+                  )}
+                </div>
                 <div className="space-y-2 max-h-40 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
                   {flatmates.map((flatmate) => (
                     <div

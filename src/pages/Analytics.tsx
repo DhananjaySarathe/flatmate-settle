@@ -8,7 +8,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { CalendarIcon, Loader2, Download, TrendingUp } from "lucide-react";
+import { CalendarIcon, Loader2, Download, TrendingUp, Filter, X } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -24,6 +24,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
+import { PeopleFilters } from "@/components/PeopleFilters";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { useReportFilters } from "@/hooks/useReportFilters";
 
 interface Flatmate {
   id: string;
@@ -58,12 +71,19 @@ export default function Analytics() {
   const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [dateRange, setDateRange] = useState({
-    from: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-    to: new Date(),
-  });
+  const {
+    dateRange,
+    peopleFilters,
+    categoryFilters,
+    setDateRange,
+    setPeopleFilters,
+    setCategoryFilters,
+    resetFilters,
+  } = useReportFilters();
   const [pdfLoading, setPdfLoading] = useState<string | null>(null);
   const [graphPeriod, setGraphPeriod] = useState<"day" | "week" | "month">("day");
+  const [filtersModalOpen, setFiltersModalOpen] = useState(false);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
 
   useEffect(() => {
     if (contextLoading) return;
@@ -73,6 +93,72 @@ export default function Analytics() {
     }
     fetchData();
   }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
+
+  // Apply filters to expenses
+  useEffect(() => {
+    let filteredExpenses = [...allExpenses];
+
+    // Apply people filters
+    if (peopleFilters.exactMatch.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return peopleFilters.exactMatch.every((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.anyMatch.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return peopleFilters.anyMatch.some((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.exclude.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return !peopleFilters.exclude.some(
+          (id) => expenseFlatmateIds.includes(id) || expense.paid_by === id
+        );
+      });
+    }
+
+    if (peopleFilters.paidBy.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) =>
+        peopleFilters.paidBy.includes(expense.paid_by)
+      );
+    }
+
+    // Apply category filters
+    if (categoryFilters.include.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        return (
+          expense.category_id &&
+          categoryFilters.include.includes(expense.category_id)
+        );
+      });
+    }
+
+    if (categoryFilters.exclude.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        return (
+          !expense.category_id ||
+          !categoryFilters.exclude.includes(expense.category_id)
+        );
+      });
+    }
+
+    setExpenses(filteredExpenses);
+  }, [allExpenses, peopleFilters, categoryFilters]);
 
   const fetchData = async () => {
     if (!selectedSplitSpace) return;
@@ -110,7 +196,8 @@ export default function Analytics() {
       if (categoriesRes.error) throw categoriesRes.error;
 
       setFlatmates(flatmatesRes.data || []);
-      setExpenses(expensesRes.data || []);
+      setAllExpenses(expensesRes.data || []);
+      // Don't set expenses here - let the filter useEffect handle it
       setCategories(categoriesRes.data || []);
     } catch (error: any) {
       console.error("Error fetching data:", error);
@@ -120,7 +207,78 @@ export default function Analytics() {
     }
   };
 
-  // Calculate category totals
+  // Apply filters to expenses - this runs whenever filters or allExpenses change
+  useEffect(() => {
+    if (allExpenses.length === 0) {
+      setExpenses([]);
+      return;
+    }
+    
+    let filteredExpenses = [...allExpenses];
+
+    // Apply people filters
+    if (peopleFilters.exactMatch.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return peopleFilters.exactMatch.every((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.anyMatch.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return peopleFilters.anyMatch.some((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.exclude.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return !peopleFilters.exclude.some(
+          (id) => expenseFlatmateIds.includes(id) || expense.paid_by === id
+        );
+      });
+    }
+
+    if (peopleFilters.paidBy.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) =>
+        peopleFilters.paidBy.includes(expense.paid_by)
+      );
+    }
+
+    // Apply category filters
+    if (categoryFilters.include.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        return (
+          expense.category_id &&
+          categoryFilters.include.includes(expense.category_id)
+        );
+      });
+    }
+
+    if (categoryFilters.exclude.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        return (
+          !expense.category_id ||
+          !categoryFilters.exclude.includes(expense.category_id)
+        );
+      });
+    }
+
+    setExpenses(filteredExpenses);
+  }, [allExpenses, peopleFilters, categoryFilters]);
+
+  // Calculate category totals - uses filtered expenses
   const categoryTotals = categories.map((category) => {
     const categoryExpenses = expenses.filter(
       (exp) => exp.category_id === category.id
@@ -366,7 +524,188 @@ export default function Analytics() {
       {/* Date Range */}
       <Card>
         <CardHeader>
-          <CardTitle>Select Date Range</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Select Date Range</CardTitle>
+            {flatmates.length > 0 && (
+              <Dialog
+                open={filtersModalOpen}
+                onOpenChange={setFiltersModalOpen}
+              >
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <Filter className="w-4 h-4" />
+                    Filters
+                    {(peopleFilters.exactMatch.length > 0 ||
+                      peopleFilters.anyMatch.length > 0 ||
+                      peopleFilters.exclude.length > 0 ||
+                      peopleFilters.paidBy.length > 0 ||
+                      categoryFilters.include.length > 0 ||
+                      categoryFilters.exclude.length > 0) && (
+                      <Badge
+                        variant="secondary"
+                        className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
+                      >
+                        {peopleFilters.exactMatch.length +
+                          peopleFilters.anyMatch.length +
+                          peopleFilters.exclude.length +
+                          peopleFilters.paidBy.length +
+                          categoryFilters.include.length +
+                          categoryFilters.exclude.length}
+                      </Badge>
+                    )}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Filter className="w-5 h-5" />
+                      Advanced Filters
+                    </DialogTitle>
+                    <DialogDescription>
+                      Filter expenses by people and categories to get precise
+                      reports
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-6 md:grid-cols-2 mt-4">
+                    <PeopleFilters
+                      flatmates={flatmates}
+                      onFiltersChange={setPeopleFilters}
+                    />
+
+                    {/* Category Filters */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">
+                          Category Filters
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium">
+                            Include Categories (Show only these)
+                          </Label>
+                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
+                            {categories.length === 0 ? (
+                              <p className="text-sm text-muted-foreground text-center py-4">
+                                No categories available
+                              </p>
+                            ) : (
+                              categories.map((category) => (
+                                <div
+                                  key={category.id}
+                                  className="flex items-center space-x-2"
+                                >
+                                  <Checkbox
+                                    id={`analytics-include-${category.id}`}
+                                    checked={categoryFilters.include.includes(
+                                      category.id
+                                    )}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          include: [
+                                            ...categoryFilters.include,
+                                            category.id,
+                                          ],
+                                        });
+                                      } else {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          include:
+                                            categoryFilters.include.filter(
+                                              (id) => id !== category.id
+                                            ),
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <Label
+                                    htmlFor={`analytics-include-${category.id}`}
+                                    className="text-sm font-normal cursor-pointer flex-1"
+                                  >
+                                    {category.name}
+                                  </Label>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        <Separator />
+
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium">
+                            Exclude Categories (Hide these)
+                          </Label>
+                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
+                            {categories.length === 0 ? (
+                              <p className="text-sm text-muted-foreground text-center py-4">
+                                No categories available
+                              </p>
+                            ) : (
+                              categories.map((category) => (
+                                <div
+                                  key={category.id}
+                                  className="flex items-center space-x-2"
+                                >
+                                  <Checkbox
+                                    id={`analytics-exclude-${category.id}`}
+                                    checked={categoryFilters.exclude.includes(
+                                      category.id
+                                    )}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          exclude: [
+                                            ...categoryFilters.exclude,
+                                            category.id,
+                                          ],
+                                        });
+                                      } else {
+                                        setCategoryFilters({
+                                          ...categoryFilters,
+                                          exclude:
+                                            categoryFilters.exclude.filter(
+                                              (id) => id !== category.id
+                                            ),
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <Label
+                                    htmlFor={`analytics-exclude-${category.id}`}
+                                    className="text-sm font-normal cursor-pointer flex-1"
+                                  >
+                                    {category.name}
+                                  </Label>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        resetFilters();
+                      }}
+                    >
+                      <X className="w-4 h-4 mr-2" />
+                      Reset All Filters
+                    </Button>
+                    <Button onClick={() => setFiltersModalOpen(false)}>
+                      Apply Filters
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
@@ -381,7 +720,7 @@ export default function Analytics() {
                 <Calendar
                   mode="single"
                   selected={dateRange.from}
-                  onSelect={(date) => date && setDateRange((prev) => ({ ...prev, from: date }))}
+                  onSelect={(date) => date && setDateRange({ ...dateRange, from: date })}
                   initialFocus
                 />
               </PopoverContent>
@@ -398,7 +737,7 @@ export default function Analytics() {
                 <Calendar
                   mode="single"
                   selected={dateRange.to}
-                  onSelect={(date) => date && setDateRange((prev) => ({ ...prev, to: date }))}
+                  onSelect={(date) => date && setDateRange({ ...dateRange, to: date })}
                   initialFocus
                 />
               </PopoverContent>

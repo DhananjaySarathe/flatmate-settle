@@ -2,13 +2,6 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Filter, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +17,7 @@ interface PeopleFiltersProps {
     exactMatch: string[];
     anyMatch: string[];
     exclude: string[];
-    paidBy: string;
+    paidBy: string[];
   }) => void;
 }
 
@@ -35,7 +28,7 @@ export const PeopleFilters = ({
   const [exactMatch, setExactMatch] = useState<string[]>([]);
   const [anyMatch, setAnyMatch] = useState<string[]>([]);
   const [exclude, setExclude] = useState<string[]>([]);
-  const [paidBy, setPaidBy] = useState<string>("");
+  const [paidBy, setPaidBy] = useState<string[]>([]);
 
   const handleExactMatchChange = (flatmateId: string, checked: boolean) => {
     const newExactMatch = checked
@@ -76,13 +69,16 @@ export const PeopleFilters = ({
     });
   };
 
-  const handlePaidByChange = (value: string) => {
-    setPaidBy(value);
+  const handlePaidByChange = (flatmateId: string, checked: boolean) => {
+    const newPaidBy = checked
+      ? [...paidBy, flatmateId]
+      : paidBy.filter((id) => id !== flatmateId);
+    setPaidBy(newPaidBy);
     applyFilters({
       exactMatch,
       anyMatch,
       exclude,
-      paidBy: value,
+      paidBy: newPaidBy,
     });
   };
 
@@ -99,12 +95,12 @@ export const PeopleFilters = ({
     setExactMatch([]);
     setAnyMatch([]);
     setExclude([]);
-    setPaidBy("");
+    setPaidBy([]);
     applyFilters({
       exactMatch: [],
       anyMatch: [],
       exclude: [],
-      paidBy: "",
+      paidBy: [],
     });
   };
 
@@ -112,7 +108,7 @@ export const PeopleFilters = ({
     exactMatch.length > 0 ||
     anyMatch.length > 0 ||
     exclude.length > 0 ||
-    paidBy !== "";
+    paidBy.length > 0;
 
   return (
     <Card>
@@ -251,24 +247,43 @@ export const PeopleFilters = ({
         </div>
 
         {/* Paid By Filter */}
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">Paid By</Label>
-          <Select value={paidBy || "all"} onValueChange={(value) => handlePaidByChange(value === "all" ? "" : value)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select person" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              {flatmates.map((flatmate) => (
-                <SelectItem key={flatmate.id} value={flatmate.id}>
+        {/* <div className="space-y-2">
+          <Label className="text-sm font-medium">
+            Paid By (Select multiple)
+          </Label>
+          <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
+            {flatmates.map((flatmate) => (
+              <div key={flatmate.id} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`paidby-${flatmate.id}`}
+                  checked={paidBy.includes(flatmate.id)}
+                  onCheckedChange={(checked) =>
+                    handlePaidByChange(flatmate.id, checked as boolean)
+                  }
+                />
+                <Label
+                  htmlFor={`paidby-${flatmate.id}`}
+                  className="text-sm font-normal cursor-pointer flex-1"
+                >
                   {flatmate.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+                </Label>
+              </div>
+            ))}
+          </div>
+          {paidBy.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {paidBy.map((id) => {
+                const flatmate = flatmates.find((f) => f.id === id);
+                return (
+                  <Badge key={id} variant="outline" className="text-xs">
+                    {flatmate?.name}
+                  </Badge>
+                );
+              })}
+            </div>
+          )}
+        </div> */}
       </CardContent>
     </Card>
   );
 };
-
