@@ -541,7 +541,23 @@ const Expenses = () => {
               </div>
 
               <div className="space-y-2">
-                <Label>Split Between * (select all involved)</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Split Between * (select all involved)</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setFormData({
+                        ...formData,
+                        splitBetween: flatmates.map((f) => f.id),
+                      });
+                    }}
+                    className="h-7 text-xs"
+                  >
+                    Select All
+                  </Button>
+                </div>
                 <div className="space-y-2 max-h-40 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
                   {flatmates.map((flatmate) => (
                     <div

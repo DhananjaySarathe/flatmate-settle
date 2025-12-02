@@ -13,8 +13,7 @@ import {
   Receipt,
   Download,
   Mail,
-  Copy,
-  Check,
+  Filter,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -23,6 +22,9 @@ import { toast } from "sonner";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import EmailReportDialog from "@/components/EmailReportDialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 
 interface Flatmate {
@@ -73,6 +75,11 @@ export default function Reports() {
     "summary" | "all-expenses" | null
   >(null);
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [selectedFlatmatesForFilter, setSelectedFlatmatesForFilter] = useState<
+    string[]
+  >([]);
+  const [filterLogic, setFilterLogic] = useState<"ALL" | "AND" | "OR">("ALL");
+  const [filteredExpenses, setFilteredExpenses] = useState<Expense[]>([]);
   const [copiedSettlement, setCopiedSettlement] = useState(false);
   const [copiedExpenses, setCopiedExpenses] = useState(false);
 
@@ -239,11 +246,46 @@ export default function Reports() {
     }
   }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
 
+  // Filter expenses based on selected flatmates and logic
+  const filterExpenses = (
+    expensesToFilter: Expense[],
+    selectedIds: string[],
+    logic: "ALL" | "AND" | "OR"
+  ): Expense[] => {
+    if (logic === "ALL" || selectedIds.length === 0) {
+      return expensesToFilter;
+    }
+
+    return expensesToFilter.filter((expense) => {
+      const expenseFlatmateIds = expense.expense_splits.map(
+        (s) => s.flatmate_id
+      );
+
+      if (logic === "AND") {
+        // All selected flatmates must be in the expense
+        return selectedIds.every((id) => expenseFlatmateIds.includes(id));
+      } else {
+        // At least one selected flatmate must be in the expense
+        return selectedIds.some((id) => expenseFlatmateIds.includes(id));
+      }
+    });
+  };
+
+  // Update filtered expenses when filter criteria changes
   useEffect(() => {
-    if (flatmates.length > 0 && expenses.length > 0) {
+    const filtered = filterExpenses(
+      expenses,
+      selectedFlatmatesForFilter,
+      filterLogic
+    );
+    setFilteredExpenses(filtered);
+  }, [expenses, selectedFlatmatesForFilter, filterLogic]);
+
+  useEffect(() => {
+    if (flatmates.length > 0 && filteredExpenses.length >= 0) {
       calculateBalances();
     }
-  }, [flatmates, expenses]);
+  }, [flatmates, filteredExpenses]);
 
   const calculateBalances = () => {
     const balanceMap = new Map<string, Balance>();
@@ -259,8 +301,8 @@ export default function Reports() {
       });
     });
 
-    // Calculate total paid and owed
-    expenses.forEach((expense) => {
+    // Calculate total paid and owed using filtered expenses
+    filteredExpenses.forEach((expense) => {
       const paidByBalance = balanceMap.get(expense.paid_by);
       if (paidByBalance) {
         paidByBalance.totalPaid += expense.amount;
@@ -489,11 +531,27 @@ export default function Reports() {
         45
       );
 
-      const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+      const totalExpenses = filteredExpenses.reduce(
+        (sum, exp) => sum + exp.amount,
+        0
+      );
       doc.text(`Total Expenses: $${totalExpenses.toFixed(2)}`, 14, 50);
 
+      // Add filter info if filter is active
+      if (filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0) {
+        const filterNames = selectedFlatmatesForFilter
+          .map((id) => flatmates.find((f) => f.id === id)?.name)
+          .filter(Boolean)
+          .join(", ");
+        doc.text(
+          `Filter: Split between ${filterNames} (${filterLogic})`,
+          14,
+          55
+        );
+      }
+
       // Expenses table
-      const tableData = expenses.map((expense) => {
+      const tableData = filteredExpenses.map((expense) => {
         const paidBy = flatmates.find((f) => f.id === expense.paid_by);
         const splitBetween = expense.expense_splits
           .map((split) => {
@@ -559,10 +617,18 @@ export default function Reports() {
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, "normal");
-      doc.text(`Total Number of Expenses: ${expenses.length}`, 14, finalY + 30);
+      doc.text(
+        `Total Number of Expenses: ${filteredExpenses.length}`,
+        14,
+        finalY + 30
+      );
       doc.text(`Total Amount: $${totalExpenses.toFixed(2)}`, 14, finalY + 35);
       doc.text(
-        `Average per Expense: $${(totalExpenses / expenses.length).toFixed(2)}`,
+        `Average per Expense: $${
+          filteredExpenses.length > 0
+            ? (totalExpenses / filteredExpenses.length).toFixed(2)
+            : "0.00"
+        }`,
         14,
         finalY + 40
       );
@@ -634,8 +700,24 @@ export default function Reports() {
         45
       );
 
-      const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+      const totalExpenses = filteredExpenses.reduce(
+        (sum, exp) => sum + exp.amount,
+        0
+      );
       doc.text(`Total Expenses: $${totalExpenses.toFixed(2)}`, 14, 50);
+
+      // Add filter info if filter is active
+      if (filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0) {
+        const filterNames = selectedFlatmatesForFilter
+          .map((id) => flatmates.find((f) => f.id === id)?.name)
+          .filter(Boolean)
+          .join(", ");
+        doc.text(
+          `Filter: Split between ${filterNames} (${filterLogic})`,
+          14,
+          55
+        );
+      }
 
       // Balance Summary Section
       doc.setFontSize(14);
@@ -784,7 +866,7 @@ export default function Reports() {
           });
         });
 
-        expenses.forEach((expense) => {
+        filteredExpenses.forEach((expense) => {
           const user = userExpenseMap.get(expense.paid_by);
           if (user) {
             user.expenses.push(expense);
@@ -943,7 +1025,7 @@ export default function Reports() {
         recipientNames,
         emailType,
         reportData: {
-          expenses: expenses.length,
+          expenses: filteredExpenses.length,
           balances: balances.length,
           settlements: settlements.length,
           dateRange: {
@@ -1040,29 +1122,22 @@ export default function Reports() {
           <CardTitle>Select Date Range</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
+          <div className="flex gap-4 items-center">
             <Popover>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
                   className={cn(
-                    "w-full sm:w-[240px] justify-start text-left font-normal",
+                    "w-[240px] justify-start text-left font-normal",
                     !dateRange.from && "text-muted-foreground"
                   )}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">
-                    {dateRange.from ? (
-                      format(dateRange.from, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick start date</span>
-                    )}
-                    {dateRange.from && (
-                      <span className="sm:hidden">
-                        {format(dateRange.from, "MMM dd")}
-                      </span>
-                    )}
-                  </span>
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {dateRange.from ? (
+                    format(dateRange.from, "PPP")
+                  ) : (
+                    <span>Pick start date</span>
+                  )}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -1089,23 +1164,16 @@ export default function Reports() {
                 <Button
                   variant="outline"
                   className={cn(
-                    "w-full sm:w-[240px] justify-start text-left font-normal",
+                    "w-[240px] justify-start text-left font-normal",
                     !dateRange.to && "text-muted-foreground"
                   )}
                 >
-                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">
-                    {dateRange.to ? (
-                      format(dateRange.to, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick end date</span>
-                    )}
-                    {dateRange.to && (
-                      <span className="sm:hidden">
-                        {format(dateRange.to, "MMM dd")}
-                      </span>
-                    )}
-                  </span>
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {dateRange.to ? (
+                    format(dateRange.to, "PPP")
+                  ) : (
+                    <span>Pick end date</span>
+                  )}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -1120,55 +1188,163 @@ export default function Reports() {
               </PopoverContent>
             </Popover>
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Copy Buttons */}
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4">
-            <Button
-              variant="outline"
-              onClick={copySettlementSummary}
-              disabled={settlements.length === 0}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto"
-            >
-              {copiedSettlement ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span className="sm:hidden">Copied!</span>
-                  <span className="hidden sm:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  <span className="sm:hidden">Copy Summary</span>
-                  <span className="hidden sm:inline">
-                    Copy Settlement Summary
-                  </span>
-                </>
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={copyAllExpenses}
-              disabled={expenses.length === 0}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto"
-            >
-              {copiedExpenses ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span className="sm:hidden">Copied!</span>
-                  <span className="hidden sm:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  <span className="sm:hidden">Copy Expenses</span>
-                  <span className="hidden sm:inline">
-                    Copy All Expense Splitting
-                  </span>
-                </>
-              )}
-            </Button>
+      {/* Filter Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Filter className="h-5 w-5" />
+            Filter by Split Between
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-3">
+            <Label>Select Flatmates</Label>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-muted-foreground">
+                Choose which flatmates to filter expenses by
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (selectedFlatmatesForFilter.length === flatmates.length) {
+                    setSelectedFlatmatesForFilter([]);
+                  } else {
+                    setSelectedFlatmatesForFilter(flatmates.map((f) => f.id));
+                  }
+                }}
+              >
+                {selectedFlatmatesForFilter.length === flatmates.length
+                  ? "Clear All"
+                  : "Select All"}
+              </Button>
+            </div>
+            <div className="max-h-40 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50 space-y-2">
+              {flatmates.map((flatmate) => (
+                <div key={flatmate.id} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`filter-${flatmate.id}`}
+                    checked={selectedFlatmatesForFilter.includes(flatmate.id)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setSelectedFlatmatesForFilter([
+                          ...selectedFlatmatesForFilter,
+                          flatmate.id,
+                        ]);
+                      } else {
+                        setSelectedFlatmatesForFilter(
+                          selectedFlatmatesForFilter.filter(
+                            (id) => id !== flatmate.id
+                          )
+                        );
+                      }
+                    }}
+                  />
+                  <Label
+                    htmlFor={`filter-${flatmate.id}`}
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    {flatmate.name}
+                  </Label>
+                </div>
+              ))}
+            </div>
           </div>
+
+          <div className="space-y-3">
+            <Label>Filter Logic</Label>
+            <RadioGroup
+              value={filterLogic}
+              onValueChange={(value) => {
+                const newLogic = value as "ALL" | "AND" | "OR";
+                setFilterLogic(newLogic);
+                if (newLogic === "ALL") {
+                  setSelectedFlatmatesForFilter([]);
+                }
+              }}
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="ALL" id="all" />
+                <Label htmlFor="all" className="cursor-pointer">
+                  All Expenses (No Filter)
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem
+                  value="AND"
+                  id="and"
+                  disabled={selectedFlatmatesForFilter.length === 0}
+                />
+                <Label
+                  htmlFor="and"
+                  className={`cursor-pointer ${
+                    selectedFlatmatesForFilter.length === 0
+                      ? "text-muted-foreground"
+                      : ""
+                  }`}
+                >
+                  AND - Expenses that include ALL selected flatmates
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem
+                  value="OR"
+                  id="or"
+                  disabled={selectedFlatmatesForFilter.length === 0}
+                />
+                <Label
+                  htmlFor="or"
+                  className={`cursor-pointer ${
+                    selectedFlatmatesForFilter.length === 0
+                      ? "text-muted-foreground"
+                      : ""
+                  }`}
+                >
+                  OR - Expenses that include ANY selected flatmate
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
+
+          {filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0 && (
+            <div className="p-3 bg-primary/10 rounded-lg border border-primary/20">
+              <p className="text-sm font-medium">
+                Showing expenses split between:{" "}
+                <span className="text-primary">
+                  {selectedFlatmatesForFilter
+                    .map((id) => flatmates.find((f) => f.id === id)?.name)
+                    .filter(Boolean)
+                    .join(", ")}
+                </span>{" "}
+                ({filterLogic})
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Total filtered expenses: {filteredExpenses.length} | Total
+                amount: $
+                {filteredExpenses
+                  .reduce((sum, exp) => sum + exp.amount, 0)
+                  .toFixed(2)}
+              </p>
+            </div>
+          )}
+
+          {filterLogic === "ALL" && (
+            <div className="p-3 bg-secondary/30 rounded-lg border border-border/50">
+              <p className="text-sm text-muted-foreground">
+                Showing all expenses (no filter applied)
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Total expenses: {filteredExpenses.length} | Total amount: $
+                {filteredExpenses
+                  .reduce((sum, exp) => sum + exp.amount, 0)
+                  .toFixed(2)}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1177,22 +1353,24 @@ export default function Reports() {
         {/* All Expenses Report */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="hidden sm:inline">All Expenses</span>
-              <span className="sm:hidden">Expenses</span>
+            <CardTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              All Expenses
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              <span className="hidden sm:inline">
-                Download a detailed report of all expenses in the selected
-                period.
-              </span>
-              <span className="sm:hidden">
-                Download detailed expense report.
-              </span>
+            <p className="text-sm text-muted-foreground">
+              Download a detailed report of{" "}
+              {filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0
+                ? "filtered "
+                : ""}
+              expenses in the selected period.
             </p>
+            {filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0 && (
+              <p className="text-xs text-primary">
+                Filter: {filterLogic} - {filteredExpenses.length} expenses
+              </p>
+            )}
             <Button
               onClick={generateAllExpensesPDF}
               disabled={pdfLoading === "all-expenses"}
@@ -1207,8 +1385,7 @@ export default function Reports() {
               ) : (
                 <>
                   <Download className="mr-2 h-4 w-4" />
-                  <span className="hidden sm:inline">Download PDF</span>
-                  <span className="sm:hidden">Download</span>
+                  Download PDF
                 </>
               )}
             </Button>
@@ -1218,21 +1395,25 @@ export default function Reports() {
         {/* Balance Summary Report */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="hidden sm:inline">Balance Summary</span>
-              <span className="sm:hidden">Summary</span>
+            <CardTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              Balance Summary
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              <span className="hidden sm:inline">
-                Download settlement summary with balances and transaction
-                details.
-              </span>
-              <span className="sm:hidden">Download settlement summary.</span>
+            <p className="text-sm text-muted-foreground">
+              Download settlement summary with{" "}
+              {filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0
+                ? "filtered "
+                : ""}
+              balances and transaction details.
             </p>
-            <div className="flex flex-col sm:flex-row gap-2">
+            {filterLogic !== "ALL" && selectedFlatmatesForFilter.length > 0 && (
+              <p className="text-xs text-primary">
+                Filter: {filterLogic} - {filteredExpenses.length} expenses
+              </p>
+            )}
+            <div className="flex gap-2">
               <Button
                 onClick={generateSummaryPDF}
                 disabled={pdfLoading === "summary"}
@@ -1258,8 +1439,7 @@ export default function Reports() {
                 className="flex-1 w-full sm:w-auto"
               >
                 <Mail className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline">Send via Email</span>
-                <span className="sm:hidden">Email</span>
+                Send via Email
               </Button> */}
             </div>
           </CardContent>
@@ -1361,33 +1541,25 @@ export default function Reports() {
       {settlements.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              Settlement Instructions
-            </CardTitle>
+            <CardTitle>Settlement Instructions</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3 sm:space-y-4">
+            <div className="space-y-4">
               {settlements.map((settlement, index) => (
                 <div
                   key={index}
                   className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 bg-green-50 rounded-lg border border-green-200 gap-2 sm:gap-0"
                 >
-                  <div className="flex items-center gap-2 sm:gap-4">
-                    <span className="font-bold text-green-800 text-sm sm:text-base">
+                  <div className="flex items-center gap-4">
+                    <span className="font-bold text-green-800">
                       {index + 1}.
                     </span>
-                    <span className="text-green-800 text-sm sm:text-base">
-                      {settlement.from}
-                    </span>
-                    <span className="text-green-600 text-sm sm:text-base">
-                      →
-                    </span>
-                    <span className="text-green-800 text-sm sm:text-base">
-                      {settlement.to}
-                    </span>
+                    <span className="text-green-800">{settlement.from}</span>
+                    <span className="text-green-600">→</span>
+                    <span className="text-green-800">{settlement.to}</span>
                   </div>
-                  <span className="font-bold text-green-800 text-sm sm:text-base">
-                    ₹{settlement.amount.toFixed(2)}
+                  <span className="font-bold text-green-800">
+                    ${settlement.amount.toFixed(2)}
                   </span>
                 </div>
               ))}
@@ -1419,18 +1591,11 @@ export default function Reports() {
       {settlements.length === 0 && balances.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              All Settled Up! 🎉
-            </CardTitle>
+            <CardTitle>All Settled Up! 🎉</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-green-600 text-sm sm:text-base">
-              <span className="hidden sm:inline">
-                No money needs to be transferred between flatmates.
-              </span>
-              <span className="sm:hidden">
-                All settled! No transfers needed.
-              </span>
+            <p className="text-green-600">
+              No money needs to be transferred between flatmates.
             </p>
           </CardContent>
         </Card>
