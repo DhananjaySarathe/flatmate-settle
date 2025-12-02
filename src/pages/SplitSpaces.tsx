@@ -140,6 +140,14 @@ const SplitSpaces = () => {
   const handleDelete = async () => {
     if (!splitSpaceToDelete) return;
 
+    // Prevent deletion of default split space
+    if (splitSpaceToDelete.name === "Default") {
+      toast.error("Cannot delete the default SplitSpace. This is your primary space.");
+      setDeleteDialogOpen(false);
+      setSplitSpaceToDelete(null);
+      return;
+    }
+
     setDeleteLoading(splitSpaceToDelete.id);
     try {
       // Check if it has flatmates or expenses
@@ -349,7 +357,8 @@ const SplitSpaces = () => {
                           e.stopPropagation();
                           openDeleteDialog(splitSpace);
                         }}
-                        disabled={deleteLoading === splitSpace.id}
+                        disabled={deleteLoading === splitSpace.id || splitSpace.name === "Default"}
+                        title={splitSpace.name === "Default" ? "Cannot delete default SplitSpace" : ""}
                       >
                         {deleteLoading === splitSpace.id ? (
                           <Loader2 className="w-4 h-4 mr-1 animate-spin" />
@@ -372,15 +381,23 @@ const SplitSpaces = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the SplitSpace "{splitSpaceToDelete?.name}". This action
-              cannot be undone.
-              {splitSpaceToDelete &&
-                (splitSpaceToDelete.flatmatesCount > 0 || splitSpaceToDelete.expensesCount > 0) && (
-                  <span className="block mt-2 text-destructive font-semibold">
-                    Warning: This SplitSpace has {splitSpaceToDelete.flatmatesCount} flatmate(s) and{" "}
-                    {splitSpaceToDelete.expensesCount} expense(s). You must remove them first.
-                  </span>
-                )}
+              {splitSpaceToDelete?.name === "Default" ? (
+                <span className="text-destructive font-semibold">
+                  Cannot delete the default SplitSpace. This is your primary space and cannot be removed.
+                </span>
+              ) : (
+                <>
+                  This will permanently delete the SplitSpace "{splitSpaceToDelete?.name}". This action
+                  cannot be undone.
+                  {splitSpaceToDelete &&
+                    (splitSpaceToDelete.flatmatesCount > 0 || splitSpaceToDelete.expensesCount > 0) && (
+                      <span className="block mt-2 text-destructive font-semibold">
+                        Warning: This SplitSpace has {splitSpaceToDelete.flatmatesCount} flatmate(s) and{" "}
+                        {splitSpaceToDelete.expensesCount} expense(s). You must remove them first.
+                      </span>
+                    )}
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -389,7 +406,9 @@ const SplitSpaces = () => {
               onClick={handleDelete}
               disabled={
                 splitSpaceToDelete
-                  ? splitSpaceToDelete.flatmatesCount > 0 || splitSpaceToDelete.expensesCount > 0
+                  ? splitSpaceToDelete.name === "Default" ||
+                    splitSpaceToDelete.flatmatesCount > 0 ||
+                    splitSpaceToDelete.expensesCount > 0
                   : false
               }
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
