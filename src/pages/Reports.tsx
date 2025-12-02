@@ -24,11 +24,20 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import EmailReportDialog from "@/components/EmailReportDialog";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
+import { PeopleFilters } from "@/components/PeopleFilters";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 interface Flatmate {
   id: string;
   name: string;
   email: string | null;
+}
+
+interface Category {
+  id: string;
+  name: string;
 }
 
 interface Expense {
@@ -37,6 +46,10 @@ interface Expense {
   amount: number;
   date: string;
   paid_by: string;
+  category_id?: string;
+  categories?: {
+    name: string;
+  };
   expense_splits: { flatmate_id: string }[];
 }
 
@@ -75,6 +88,18 @@ export default function Reports() {
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [copiedSettlement, setCopiedSettlement] = useState(false);
   const [copiedExpenses, setCopiedExpenses] = useState(false);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [peopleFilters, setPeopleFilters] = useState({
+    exactMatch: [] as string[],
+    anyMatch: [] as string[],
+    exclude: [] as string[],
+    paidBy: "",
+  });
+  const [categoryFilters, setCategoryFilters] = useState({
+    include: [] as string[],
+    exclude: [] as string[],
+  });
 
   const fetchDataWithoutSplitSpace = async () => {
     setLoading(true);
@@ -91,6 +116,7 @@ export default function Reports() {
         .select(
           `
           *,
+          categories (name),
           expense_splits (
             flatmate_id
           )
@@ -103,7 +129,20 @@ export default function Reports() {
       if (expensesError) throw expensesError;
 
       setFlatmates(flatmatesData || []);
-      setExpenses(expensesData || []);
+      setAllExpenses(expensesData || []);
+
+      // Fetch categories
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const { data: categoriesData } = await supabase
+          .from("categories")
+          .select("id, name")
+          .eq("created_by", user.id)
+          .order("name");
+        setCategories(categoriesData || []);
+      }
     } catch (error: any) {
       console.error("Error fetching data:", error);
       toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
@@ -169,8 +208,18 @@ export default function Reports() {
         .lte("date", dateRange.to.toISOString().split("T")[0])
         .order("date", { ascending: false });
 
+      const expensesQueryWithCategory = expensesQuery.select(
+        `
+          *,
+          categories (name),
+          expense_splits (
+            flatmate_id
+          )
+        `
+      );
+
       const { data: expensesData, error: expensesError } =
-        await expensesQuery.or(
+        await expensesQueryWithCategory.or(
           `split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`
         );
 
@@ -185,6 +234,7 @@ export default function Reports() {
             .select(
               `
               *,
+              categories (name),
               expense_splits (
                 flatmate_id
               )
@@ -194,12 +244,25 @@ export default function Reports() {
             .lte("date", dateRange.to.toISOString().split("T")[0])
             .order("date", { ascending: false });
           if (error) throw error;
-          setExpenses(data || []);
+          setAllExpenses(data || []);
         } else {
           throw expensesError;
         }
       } else {
-        setExpenses(expensesData || []);
+        setAllExpenses(expensesData || []);
+      }
+
+      // Fetch categories
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const { data: categoriesData } = await supabase
+          .from("categories")
+          .select("id, name")
+          .eq("created_by", user.id)
+          .order("name");
+        setCategories(categoriesData || []);
       }
     } catch (error: any) {
       console.error("Error fetching data:", error);
@@ -238,6 +301,72 @@ export default function Reports() {
       setLoading(false);
     }
   }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
+
+  // Apply filters to expenses
+  useEffect(() => {
+    let filteredExpenses = [...allExpenses];
+
+    // Apply people filters
+    if (peopleFilters.exactMatch.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return peopleFilters.exactMatch.every((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.anyMatch.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return peopleFilters.anyMatch.some((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.exclude.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        const expenseFlatmateIds = expense.expense_splits.map(
+          (s) => s.flatmate_id
+        );
+        return !peopleFilters.exclude.some((id) =>
+          expenseFlatmateIds.includes(id)
+        );
+      });
+    }
+
+    if (peopleFilters.paidBy) {
+      filteredExpenses = filteredExpenses.filter(
+        (expense) => expense.paid_by === peopleFilters.paidBy
+      );
+    }
+
+    // Apply category filters
+    if (categoryFilters.include.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        return (
+          expense.category_id &&
+          categoryFilters.include.includes(expense.category_id)
+        );
+      });
+    }
+
+    if (categoryFilters.exclude.length > 0) {
+      filteredExpenses = filteredExpenses.filter((expense) => {
+        return (
+          !expense.category_id ||
+          !categoryFilters.exclude.includes(expense.category_id)
+        );
+      });
+    }
+
+    setExpenses(filteredExpenses);
+  }, [allExpenses, peopleFilters, categoryFilters]);
 
   useEffect(() => {
     if (flatmates.length > 0 && expenses.length > 0) {
@@ -1033,6 +1162,110 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      {/* Filters Section */}
+      {flatmates.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <PeopleFilters
+            flatmates={flatmates}
+            onFiltersChange={setPeopleFilters}
+          />
+
+          {/* Category Filters */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Category Filters</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Include Categories (Show only these)
+                </Label>
+                <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
+                  {categories.map((category) => (
+                    <div
+                      key={category.id}
+                      className="flex items-center space-x-2"
+                    >
+                      <Checkbox
+                        id={`include-${category.id}`}
+                        checked={categoryFilters.include.includes(category.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setCategoryFilters({
+                              ...categoryFilters,
+                              include: [
+                                ...categoryFilters.include,
+                                category.id,
+                              ],
+                            });
+                          } else {
+                            setCategoryFilters({
+                              ...categoryFilters,
+                              include: categoryFilters.include.filter(
+                                (id) => id !== category.id
+                              ),
+                            });
+                          }
+                        }}
+                      />
+                      <Label
+                        htmlFor={`include-${category.id}`}
+                        className="text-sm font-normal cursor-pointer flex-1"
+                      >
+                        {category.name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  Exclude Categories (Hide these)
+                </Label>
+                <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
+                  {categories.map((category) => (
+                    <div
+                      key={category.id}
+                      className="flex items-center space-x-2"
+                    >
+                      <Checkbox
+                        id={`exclude-cat-${category.id}`}
+                        checked={categoryFilters.exclude.includes(category.id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setCategoryFilters({
+                              ...categoryFilters,
+                              exclude: [
+                                ...categoryFilters.exclude,
+                                category.id,
+                              ],
+                            });
+                          } else {
+                            setCategoryFilters({
+                              ...categoryFilters,
+                              exclude: categoryFilters.exclude.filter(
+                                (id) => id !== category.id
+                              ),
+                            });
+                          }
+                        }}
+                      />
+                      <Label
+                        htmlFor={`exclude-cat-${category.id}`}
+                        className="text-sm font-normal cursor-pointer flex-1"
+                      >
+                        {category.name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Date Range Selector */}
       <Card>

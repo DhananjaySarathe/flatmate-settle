@@ -39,6 +39,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
+import { CategorySelector } from "@/components/CategorySelector";
+import { Badge } from "@/components/ui/badge";
 
 interface Flatmate {
   id: string;
@@ -51,6 +53,10 @@ interface Expense {
   amount: number;
   date: string;
   paid_by: string;
+  category_id?: string;
+  categories?: {
+    name: string;
+  };
   flatmates: {
     name: string;
   };
@@ -72,6 +78,7 @@ const Expenses = () => {
     date: new Date(),
     paidBy: "",
     splitBetween: [] as string[],
+    categoryId: "",
   });
   const [submitLoading, setSubmitLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
@@ -87,6 +94,7 @@ const Expenses = () => {
             `
             *,
             flatmates!expenses_paid_by_fkey (name),
+            categories (name),
             expense_splits (flatmate_id)
           `
           )
@@ -151,6 +159,7 @@ const Expenses = () => {
                 `
                 *,
                 flatmates!expenses_paid_by_fkey (name),
+                categories (name),
                 expense_splits (flatmate_id)
               `
               )
@@ -171,6 +180,7 @@ const Expenses = () => {
                 `
                 *,
                 flatmates!expenses_paid_by_fkey (name),
+                categories (name),
                 expense_splits (flatmate_id)
               `
               )
@@ -276,6 +286,7 @@ const Expenses = () => {
             amount: parseFloat(formData.amount),
             date: format(formData.date, "yyyy-MM-dd"),
             paid_by: formData.paidBy,
+            category_id: formData.categoryId || null,
           })
           .eq("id", editingExpense.id);
 
@@ -307,6 +318,7 @@ const Expenses = () => {
           date: format(formData.date, "yyyy-MM-dd"),
           paid_by: formData.paidBy,
           created_by: user.id,
+          category_id: formData.categoryId || null,
         };
 
         // Only add split_space_id if it exists and is selected
@@ -355,6 +367,7 @@ const Expenses = () => {
       date: new Date(expense.date),
       paidBy: expense.paid_by,
       splitBetween: expense.expense_splits.map((s) => s.flatmate_id),
+      categoryId: expense.category_id || "",
     });
     setDialogOpen(true);
   };
@@ -383,6 +396,7 @@ const Expenses = () => {
       date: new Date(),
       paidBy: "",
       splitBetween: [],
+      categoryId: "",
     });
     setEditingExpense(null);
   };
@@ -520,6 +534,17 @@ const Expenses = () => {
               </div>
 
               <div className="space-y-2">
+                <Label>Category</Label>
+                <CategorySelector
+                  value={formData.categoryId}
+                  onValueChange={(value) =>
+                    setFormData({ ...formData, categoryId: value })
+                  }
+                  splitSpaceId={selectedSplitSpace?.id}
+                />
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="paidBy">Paid By *</Label>
                 <Select
                   value={formData.paidBy}
@@ -641,10 +666,15 @@ const Expenses = () => {
                         <CardContent className="p-4">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
                                 <h3 className="font-semibold text-lg truncate">
                                   {expense.title}
                                 </h3>
+                                {expense.categories && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    {expense.categories.name}
+                                  </Badge>
+                                )}
                                 <span className="text-sm text-muted-foreground whitespace-nowrap">
                                   {format(
                                     new Date(expense.date),
