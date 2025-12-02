@@ -8,8 +8,11 @@ Welcome to **ExpenseWaale**, your comprehensive expense splitting application! T
 2. [Understanding Split Spaces](#understanding-split-spaces)
 3. [Managing Flatmates](#managing-flatmates)
 4. [Tracking Expenses](#tracking-expenses)
-5. [Viewing Reports](#viewing-reports)
-6. [Tips & Best Practices](#tips--best-practices)
+5. [Categories](#categories)
+6. [Viewing Reports](#viewing-reports)
+7. [Analytics Dashboard](#analytics-dashboard)
+8. [Leaderboard & Fun Stats](#leaderboard--fun-stats)
+9. [Tips & Best Practices](#tips--best-practices)
 
 ---
 
@@ -113,8 +116,10 @@ The **Expenses** page is where you record all shared expenses and split them amo
    - **Amount**: The total cost (e.g., 150.00)
    - **Date**: When the expense occurred
    - **Paid By**: Who paid for this expense (select from your flatmates)
+   - **Category**: Select a category (Food, Travel, Rent, Groceries, Utilities, Fuel, Shopping, Misc, or create a custom category)
    - **Split Between**: Select all the people who should share this cost
-     - Check the boxes next to each flatmate's name
+     - Use **"Select All"** button to quickly select everyone
+     - Or check the boxes next to each flatmate's name individually
      - The amount will be automatically divided equally among selected people
 
 4. Click **"Add Expense"**
@@ -128,18 +133,59 @@ The **Expenses** page is where you record all shared expenses and split them amo
 ### Editing an Expense
 
 - Click the **Edit** icon on any expense card
-- Modify the details and save
+- Modify the details (including category) and save
 
 ### Deleting an Expense
 
 - Click the **Delete** icon on an expense card
 - Confirm the deletion
 
+### Viewing Expenses
+
+- Expenses are displayed as cards showing:
+  - Title and category badge
+  - Amount and date
+  - Who paid
+  - Who it was split between
+  - Amount per person
+
+---
+
+## Categories
+
+**Categories** help you organize and analyze your expenses. ExpenseWaale comes with 8 default categories, and you can create custom ones.
+
+### Default Categories
+
+- **Food**: Restaurants, takeout, food delivery
+- **Travel**: Transportation, flights, hotels
+- **Rent**: Housing costs
+- **Groceries**: Supermarket shopping
+- **Utilities**: Electricity, water, internet bills
+- **Fuel**: Gas, petrol, charging
+- **Shopping**: General purchases
+- **Misc**: Everything else
+
+### Custom Categories
+
+- When adding an expense, select **"Add Custom Category"** from the category dropdown
+- Enter a unique category name
+- Your custom categories are available for all future expenses
+- Custom categories can be deleted (default categories cannot)
+
+### Using Categories
+
+- Every expense must have a category (defaults to "Misc" if none selected)
+- Categories help you:
+  - Filter expenses in Reports and Analytics
+  - Understand spending patterns
+  - Generate category-wise insights
+
 ---
 
 ## Viewing Reports
 
-The **Reports** page provides comprehensive insights into your expenses, balances, and settlement instructions.
+The **Reports** page provides comprehensive insights into your expenses, balances, and settlement instructions with powerful filtering capabilities.
 
 ### Understanding the Reports Page
 
@@ -148,6 +194,47 @@ The **Reports** page provides comprehensive insights into your expenses, balance
 - Select a **start date** and **end date** to filter expenses
 - By default, it shows expenses from the beginning of the current month to today
 - All calculations and reports will be based on this date range
+- **Your date range is saved** and will persist when you reload the page or navigate away
+
+#### Advanced Filters
+
+Click the **"Filters"** button in the Date Range card to open the Advanced Filters modal:
+
+**People-Based Filters:**
+
+- **Exact Match**: Show expenses split between ALL selected people (everyone must be involved)
+- **Any Match**: Show expenses where ANY of the selected people are involved
+- **Exclude**: Hide expenses involving these people (including expenses they paid for)
+- **Paid By**: Show expenses paid by specific people (multi-select)
+
+**Category Filters:**
+
+- **Include Categories**: Show only expenses in these categories
+- **Exclude Categories**: Hide expenses in these categories
+
+**Filter Features:**
+
+- Multiple filter types work together (AND logic)
+- Filter badge shows the total number of active filters
+- **Reset All Filters** button clears everything
+- **Your filters are saved** and persist across page reloads
+
+#### Filtered Transactions List
+
+Below the date range selector, you'll see:
+
+- All transactions matching your filters and date range
+- Transaction count in the header
+- Date range badge
+- **Sort By** dropdown: Sort by Date (Newest/Oldest), Amount (High/Low), or Title (A-Z/Z-A)
+- **Paid By** filter: Additional quick filter for who paid (multi-select)
+- Each transaction shows:
+  - Title and category badge
+  - Date
+  - Who paid
+  - Who it was split between
+  - Amount per person
+  - Total amount
 
 #### Balance Summary
 
@@ -166,8 +253,7 @@ This table shows:
 This section shows exactly who needs to pay whom and how much:
 
 - Example: "Alice → Bob: ₹250.00" means Alice should pay Bob ₹250
-
-The system calculates the minimum number of transactions needed to settle all balances.
+- The system calculates the minimum number of transactions needed to settle all balances
 
 ### Exporting Reports
 
@@ -182,8 +268,8 @@ These are useful for sharing via messaging apps or email.
 
 1. **All Expenses PDF**:
 
-   - Detailed list of all expenses in the date range
-   - Shows date, description, who paid, who it was split with, and amounts
+   - Detailed list of all filtered expenses in the date range
+   - Shows date, description, category, who paid, who it was split with, and amounts
    - Perfect for record-keeping
 
 2. **Balance Summary PDF**:
@@ -202,6 +288,87 @@ These are useful for sharing via messaging apps or email.
 
 ---
 
+## Analytics Dashboard
+
+The **Analytics** page provides deep insights into your spending patterns, trends, and financial health.
+
+### Key Metrics
+
+Four key cards show at a glance:
+
+- **Total Expenses**: Sum of all filtered expenses
+- **Avg per Day**: Average daily spending
+- **Avg per Person**: Average spending per person
+- **Fairness Score**: How evenly expenses are distributed (0-100, higher is more fair)
+
+### Category Breakdown
+
+- Visual progress bars showing spending per category
+- Percentage of total expenses
+- Number of expenses per category
+- Sorted by total amount (highest first)
+
+### Expense Trends Graph
+
+- Beautiful area chart showing spending patterns over time
+- **Period selector**: View by Day, Week, or Month
+- Interactive tooltips showing exact amounts
+- Smooth trend visualization
+- Helps identify spending spikes and patterns
+
+### Top 5 Most Expensive Days
+
+- Lists the days with highest spending
+- Shows total amount and number of expenses
+- Helps identify expensive days or events
+
+### Advanced Filtering
+
+- Same powerful filters as Reports page
+- Filters affect all analytics calculations
+- Your filters persist across page reloads
+
+### PDF Export
+
+- Download comprehensive analytics summary
+- Includes all metrics, category breakdown, and top days
+- Professional format for sharing or record-keeping
+
+---
+
+## Leaderboard & Fun Stats
+
+The **Leaderboard** page adds a fun, competitive element to expense tracking with badges and achievements.
+
+### Top 3 Payers
+
+- 🥇 Gold medal for the highest contributor
+- 🥈 Silver medal for 2nd place
+- 🥉 Bronze medal for 3rd place
+- Shows total paid and number of expenses
+
+### Fun Stats & Badges
+
+**Main Badges:**
+
+- **Most Generous**: Person who paid the most overall
+- **Silent Assassin**: Person with lowest spending but still active
+- **Big Spender**: Person with the highest single expense
+
+**Category-Specific Badges:**
+
+- **Milk Bhai** 🥛: Top spender in Groceries
+- **Fuel King** ⛽: Top spender in Fuel
+- **Foodie** 🍕: Top spender in Food
+
+### PDF Export
+
+- Download leaderboard as PDF
+- Includes all rankings and badges
+- Great for sharing achievements with your group!
+
+---
+
 ## Tips & Best Practices
 
 ### Organizing Your Expenses
@@ -216,7 +383,13 @@ These are useful for sharing via messaging apps or email.
    - Use consistent names for flatmates across all Split Spaces
    - Add email addresses for easy report sharing
 
-3. **Regular Updates**:
+3. **Use Categories Effectively**:
+
+   - Assign appropriate categories to all expenses
+   - Create custom categories for recurring expense types
+   - Use categories to filter and analyze spending patterns
+
+4. **Regular Updates**:
    - Add expenses as soon as they occur
    - Review balances regularly to avoid large settlements
 
@@ -236,6 +409,23 @@ These are useful for sharing via messaging apps or email.
    - Download PDF reports for your records
    - They're useful for tax purposes or future reference
 
+### Using Filters Effectively
+
+1. **Filter Persistence**:
+
+   - Your filters and date ranges are automatically saved
+   - They persist when you reload the page or navigate away
+   - Great for ongoing analysis of specific time periods or people
+
+2. **Combining Filters**:
+
+   - Use multiple filter types together for precise analysis
+   - Example: Show only Food expenses paid by specific people in a date range
+
+3. **Quick Filtering**:
+   - Use the "Paid By" filter in the transactions table for quick filtering
+   - Sort transactions to find specific expenses quickly
+
 ### Best Practices for Groups
 
 1. **Clear Communication**:
@@ -252,6 +442,22 @@ These are useful for sharing via messaging apps or email.
    - Use your "Default" space for regular, ongoing expenses
    - Create new spaces for special occasions or separate groups
 
+### Using Analytics
+
+1. **Track Trends**:
+
+   - Use the Expense Trends graph to identify spending patterns
+   - Switch between Day/Week/Month views for different insights
+
+2. **Category Analysis**:
+
+   - Review category breakdown regularly
+   - Identify areas where you're spending the most
+
+3. **Fairness Monitoring**:
+   - Check the Fairness Score to ensure balanced contributions
+   - Use it to discuss expense distribution with your group
+
 ### Troubleshooting
 
 **Can't delete a Split Space?**
@@ -263,11 +469,19 @@ These are useful for sharing via messaging apps or email.
 
 - Check that you've selected the correct people in "Split Between"
 - Verify the date range in Reports matches when expenses were added
+- Check if filters are excluding relevant expenses
 
 **Can't see expenses?**
 
 - Make sure you have a Split Space selected
 - Check that you're looking at the correct date range
+- Review your filters - they might be hiding expenses
+
+**Filters not working as expected?**
+
+- Remember that multiple filter types use AND logic (all must match)
+- Check if "Exclude" filters are hiding expenses you want to see
+- Use "Reset All Filters" to start fresh
 
 ---
 
@@ -276,8 +490,10 @@ These are useful for sharing via messaging apps or email.
 ### Navigation
 
 - **Dashboard**: Manage flatmates
-- **Expenses**: Add and track expenses
-- **Reports**: View balances and download reports
+- **Expenses**: Add and track expenses with categories
+- **Reports**: View balances, filters, and download reports
+- **Analytics**: Deep insights and spending trends
+- **Leaderboard**: Fun stats and achievements
 - **Split Spaces**: Create and manage expense groups
 
 ### Key Concepts
@@ -285,8 +501,19 @@ These are useful for sharing via messaging apps or email.
 - **Split Space**: A group/context for organizing expenses
 - **Flatmate**: A person you're splitting expenses with
 - **Expense**: A shared cost that needs to be split
+- **Category**: A label for organizing expenses (Food, Travel, etc.)
 - **Balance**: The net amount someone owes or is owed
 - **Settlement**: The transactions needed to balance everything out
+- **Filter**: A way to show only specific expenses (by people, categories, dates)
+
+### Filter Types
+
+- **Exact Match**: Expenses where ALL selected people are involved
+- **Any Match**: Expenses where ANY selected people are involved
+- **Exclude**: Hide expenses involving selected people
+- **Paid By**: Show expenses paid by specific people
+- **Include Categories**: Show only expenses in these categories
+- **Exclude Categories**: Hide expenses in these categories
 
 ---
 
@@ -296,11 +523,12 @@ If you encounter any issues or have questions:
 
 1. Check this guide for common solutions
 2. Review your Split Space selection
-3. Verify your date ranges in Reports
+3. Verify your date ranges and filters in Reports/Analytics
 4. Make sure all required fields are filled when adding expenses
+5. Try resetting filters if results seem unexpected
 
 ---
 
 **Happy expense tracking! 🎉**
 
-Remember: The goal is to make splitting expenses fair, easy, and transparent for everyone involved.
+Remember: The goal is to make splitting expenses fair, easy, and transparent for everyone involved. Use filters, analytics, and reports to stay on top of your shared expenses!
