@@ -10,6 +10,7 @@ import Reports from "./pages/Reports";
 import SplitSpaces from "./pages/SplitSpaces";
 import Analytics from "./pages/Analytics";
 import Leaderboard from "./pages/Leaderboard";
+import MyCost from "./pages/MyCost";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 import { SplitSpaceProvider } from "./contexts/SplitSpaceContext";
@@ -31,6 +32,7 @@ const App = () => (
             <Route path="/reports" element={<Layout><Reports /></Layout>} />
             <Route path="/analytics" element={<Layout><Analytics /></Layout>} />
             <Route path="/leaderboard" element={<Layout><Leaderboard /></Layout>} />
+            <Route path="/my-cost" element={<Layout><MyCost /></Layout>} />
             <Route path="/split-spaces" element={<Layout><SplitSpaces /></Layout>} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

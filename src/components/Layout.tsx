@@ -14,6 +14,7 @@ import {
   X,
   TrendingUp,
   Trophy,
+  DollarSign,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SplitSpaceSelector } from "@/components/SplitSpaceSelector";
@@ -69,6 +70,7 @@ const Layout = ({ children }: LayoutProps) => {
     { path: "/reports", icon: FileText, label: "Reports" },
     { path: "/analytics", icon: TrendingUp, label: "Analytics" },
     { path: "/leaderboard", icon: Trophy, label: "Leaderboard" },
+    { path: "/my-cost", icon: DollarSign, label: "My Cost" },
   ];
 
   return (
