@@ -1,12 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { format } from "date-fns";
-import { Loader2, Receipt, AlertTriangle } from "lucide-react";
+import { Loader2, Receipt, AlertTriangle, User } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { ReportSnapshot, SnapshotBalance } from "@/lib/settlement";
 
 interface SharedRow {
@@ -32,6 +39,7 @@ export default function SharedReport() {
   const [loading, setLoading] = useState(true);
   const [row, setRow] = useState<SharedRow | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -88,6 +96,31 @@ export default function SharedReport() {
 
   const { snapshot } = row;
 
+  const personNames = useMemo(() => {
+    const names = new Set<string>();
+    snapshot.balances.forEach((b) => names.add(b.name));
+    snapshot.expenses.forEach((e) => {
+      names.add(e.paidBy);
+      e.splitBetween.forEach((n) => names.add(n));
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [snapshot]);
+
+  const activePerson =
+    selectedPerson && personNames.includes(selectedPerson)
+      ? selectedPerson
+      : personNames[0] ?? null;
+
+  const personData = useMemo(() => {
+    if (!activePerson) return null;
+    const balance = snapshot.balances.find((b) => b.name === activePerson);
+    const paidByThem = snapshot.expenses.filter((e) => e.paidBy === activePerson);
+    const owesShareIn = snapshot.expenses.filter(
+      (e) => e.paidBy !== activePerson && e.splitBetween.includes(activePerson)
+    );
+    return { balance, paidByThem, owesShareIn };
+  }, [activePerson, snapshot]);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto p-4 sm:p-6 max-w-5xl space-y-4 sm:space-y-6">
@@ -107,10 +140,11 @@ export default function SharedReport() {
         </div>
 
         <Tabs defaultValue="summary" className="w-full">
-          <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex">
+          <TabsList className="w-full sm:w-auto grid grid-cols-2 sm:grid-cols-4 sm:inline-flex h-auto sm:h-10">
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="settlements">Settlements</TabsTrigger>
             <TabsTrigger value="expenses">Expenses</TabsTrigger>
+            <TabsTrigger value="by-person">By Person</TabsTrigger>
           </TabsList>
 
           <TabsContent value="summary">
@@ -261,6 +295,165 @@ export default function SharedReport() {
                       </tbody>
                     </table>
                   </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="by-person">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-lg sm:text-xl">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 sm:w-5 sm:h-5" />
+                    By Person
+                  </div>
+                  {personNames.length > 0 && (
+                    <Select
+                      value={activePerson ?? undefined}
+                      onValueChange={setSelectedPerson}
+                    >
+                      <SelectTrigger className="w-full sm:w-[220px] h-9">
+                        <SelectValue placeholder="Choose person" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {personNames.map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!personData ? (
+                  <p className="text-sm text-muted-foreground">No people in this report.</p>
+                ) : (
+                  <>
+                    {personData.balance && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                        <div className="rounded-md border border-border/50 p-3 bg-secondary/20">
+                          <div className="text-xs text-muted-foreground">Paid</div>
+                          <div className="text-sm sm:text-base font-semibold mt-1">
+                            {formatINR(personData.balance.totalPaid)}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-border/50 p-3 bg-secondary/20">
+                          <div className="text-xs text-muted-foreground">Owed (share)</div>
+                          <div className="text-sm sm:text-base font-semibold mt-1">
+                            {formatINR(personData.balance.totalOwed)}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-border/50 p-3 bg-secondary/20">
+                          <div className="text-xs text-muted-foreground">Net</div>
+                          <div
+                            className={
+                              "text-sm sm:text-base font-semibold mt-1 " +
+                              (personData.balance.balance > 0.01
+                                ? "text-green-600"
+                                : personData.balance.balance < -0.01
+                                ? "text-red-600"
+                                : "")
+                            }
+                          >
+                            {personData.balance.balance >= 0 ? "+" : "-"}
+                            {formatINR(Math.abs(personData.balance.balance))}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-border/50 p-3 bg-secondary/20">
+                          <div className="text-xs text-muted-foreground">Status</div>
+                          <div className="mt-1">
+                            {statusBadge(personData.balance.status)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="text-sm font-semibold mb-2">
+                        Expenses {activePerson} paid for ({personData.paidByThem.length})
+                      </div>
+                      {personData.paidByThem.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">None.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {personData.paidByThem.map((e, idx) => (
+                            <div
+                              key={`paid-${idx}`}
+                              className="flex items-start justify-between gap-3 rounded-md border border-border/50 p-3 bg-secondary/20"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-medium">{e.title}</span>
+                                  {e.category && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      {e.category}
+                                    </Badge>
+                                  )}
+                                  <span className="text-xs text-muted-foreground">
+                                    {format(new Date(e.date), "MMM d, yyyy")}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-muted-foreground mt-1">
+                                  Split with {e.splitBetween.length}{" "}
+                                  {e.splitBetween.length === 1 ? "person" : "people"}:{" "}
+                                  {e.splitBetween.join(", ")}
+                                </div>
+                              </div>
+                              <div className="text-sm font-semibold whitespace-nowrap">
+                                {formatINR(e.amount)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-semibold mb-2">
+                        {activePerson}'s share in others' expenses ({personData.owesShareIn.length})
+                      </div>
+                      {personData.owesShareIn.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">None.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {personData.owesShareIn.map((e, idx) => (
+                            <div
+                              key={`owes-${idx}`}
+                              className="flex items-start justify-between gap-3 rounded-md border border-border/50 p-3 bg-secondary/20"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-medium">{e.title}</span>
+                                  {e.category && (
+                                    <Badge variant="secondary" className="text-xs">
+                                      {e.category}
+                                    </Badge>
+                                  )}
+                                  <span className="text-xs text-muted-foreground">
+                                    {format(new Date(e.date), "MMM d, yyyy")}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-muted-foreground mt-1">
+                                  Paid by {e.paidBy} · split {e.splitBetween.length}-way
+                                </div>
+                              </div>
+                              <div className="text-right whitespace-nowrap">
+                                <div className="text-sm font-semibold">
+                                  {formatINR(e.perPerson)}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  of {formatINR(e.amount)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>

@@ -23,6 +23,8 @@ import {
   Share2,
   Trash2,
   Link as LinkIcon,
+  MessageCircle,
+  Send,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -612,6 +614,44 @@ export default function Reports() {
       toast.success("Link copied");
     } catch {
       toast.error("Couldn't copy — please copy manually");
+    }
+  };
+
+  const buildShareMessage = () => {
+    if (!shareUrl) return "";
+    const space = selectedSplitSpace?.name ?? "Split Space";
+    const range = `${format(dateRange.from, "MMM d")} – ${format(dateRange.to, "MMM d, yyyy")}`;
+    return `Settlement summary for ${space} (${range}). View the full breakdown here: ${shareUrl}`;
+  };
+
+  const openShareTarget = (target: "whatsapp" | "telegram" | "email" | "native") => {
+    if (!shareUrl) return;
+    const message = buildShareMessage();
+    const space = selectedSplitSpace?.name ?? "Split Space";
+    const range = `${format(dateRange.from, "MMM d")} – ${format(dateRange.to, "MMM d, yyyy")}`;
+    const subject = `Settlement summary — ${space} (${range})`;
+    if (target === "whatsapp") {
+      window.open(
+        `https://wa.me/?text=${encodeURIComponent(message)}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+    } else if (target === "telegram") {
+      window.open(
+        `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(message)}`,
+        "_blank",
+        "noopener,noreferrer"
+      );
+    } else if (target === "email") {
+      window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
+    } else if (target === "native") {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        navigator
+          .share({ title: subject, text: message, url: shareUrl })
+          .catch(() => {});
+      } else {
+        toast.error("Native share not available on this device");
+      }
     }
   };
 
@@ -2130,21 +2170,67 @@ export default function Reports() {
             </DialogDescription>
           </DialogHeader>
           {shareUrl && (
-            <div className="flex items-center gap-2">
-              <Input value={shareUrl} readOnly onFocus={(e) => e.currentTarget.select()} />
-              <Button onClick={copyShareUrl} variant="outline" className="gap-2">
-                {shareCopied ? (
-                  <>
-                    <Check className="h-4 w-4" />
-                    Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4" />
-                    Copy
-                  </>
-                )}
-              </Button>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input value={shareUrl} readOnly onFocus={(e) => e.currentTarget.select()} />
+                <Button onClick={copyShareUrl} variant="outline" className="gap-2">
+                  {shareCopied ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" />
+                      Copy
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Share via</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => openShareTarget("whatsapp")}
+                  >
+                    <MessageCircle className="h-4 w-4 text-green-600" />
+                    WhatsApp
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => openShareTarget("telegram")}
+                  >
+                    <Send className="h-4 w-4 text-sky-500" />
+                    Telegram
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => openShareTarget("email")}
+                  >
+                    <Mail className="h-4 w-4" />
+                    Email
+                  </Button>
+                  {typeof navigator !== "undefined" && (navigator as any).share && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => openShareTarget("native")}
+                    >
+                      <Share2 className="h-4 w-4" />
+                      More
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
           )}
           <DialogFooter>
