@@ -207,7 +207,7 @@ const Dashboard = () => {
               Add Flatmate
             </Button>
           </DialogTrigger>
-          <DialogContent className="glass-card border-border/50">
+          <DialogContent>
             <DialogHeader>
               <DialogTitle>
                 {editingFlatmate ? "Edit Flatmate" : "Add New Flatmate"}
@@ -227,7 +227,6 @@ const Dashboard = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, name: e.target.value })
                   }
-                  className="bg-secondary/50"
                   required
                 />
               </div>
@@ -240,7 +239,6 @@ const Dashboard = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, email: e.target.value })
                   }
-                  className="bg-secondary/50"
                 />
               </div>
               <div className="space-y-2">
@@ -252,7 +250,6 @@ const Dashboard = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, phone: e.target.value })
                   }
-                  className="bg-secondary/50"
                 />
               </div>
               <Button
@@ -307,26 +304,27 @@ const Dashboard = () => {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.1 }}
+                  className="min-w-0"
                 >
                   <Card className="bg-secondary/50 border-border/50 hover:border-primary/30 transition-colors">
                     <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg mb-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-lg mb-1 truncate">
                             {flatmate.name}
                           </h3>
                           {flatmate.email && (
-                            <p className="text-sm text-muted-foreground">
+                            <p className="text-sm text-muted-foreground truncate">
                               {flatmate.email}
                             </p>
                           )}
                           {flatmate.phone && (
-                            <p className="text-sm text-muted-foreground">
+                            <p className="text-sm text-muted-foreground truncate">
                               {flatmate.phone}
                             </p>
                           )}
                         </div>
-                        <div className="flex space-x-1">
+                        <div className="flex space-x-1 shrink-0">
                           <Button
                             variant="ghost"
                             size="icon"

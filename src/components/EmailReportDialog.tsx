@@ -99,7 +99,7 @@ const EmailReportDialog = ({
         if (!open) resetDialog();
       }}
     >
-      <DialogContent className="glass-card border-border/50 max-w-md">
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center">
             <Mail className="w-5 h-5 mr-2 text-primary" />

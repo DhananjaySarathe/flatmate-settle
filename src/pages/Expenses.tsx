@@ -459,7 +459,7 @@ const Expenses = () => {
               Add Expense
             </Button>
           </DialogTrigger>
-          <DialogContent className="glass-card border-border/50 max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingExpense ? "Edit Expense" : "Add New Expense"}
