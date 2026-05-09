@@ -5,8 +5,15 @@ import { Loader2, Download, Filter, X, DollarSign } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import {
+  drawPdfHeader,
+  drawPdfFooter,
+  drawSectionTitle,
+  drawBody,
+  tableStyles,
+  createPdfDoc,
+} from "@/lib/pdfStyle";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -322,46 +329,19 @@ export default function MyCost() {
   const generatePDF = async () => {
     setPdfLoading(true);
     try {
-      const doc = new jsPDF();
-
-      // Header
-      doc.setFillColor(59, 130, 246); // Blue header
-      doc.rect(0, 0, 210, 30, "F");
-
-      doc.setFontSize(20);
-      doc.setTextColor(255, 255, 255);
-      doc.setFont(undefined, "bold");
-      doc.text("EXPENSEWAALE COST REPORT", 14, 20);
-
-      if (selectedSplitSpace) {
-        doc.setFontSize(12);
-        doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "normal");
-        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 26);
-      }
-
-      // Reset font
-      doc.setFont(undefined, "normal");
-
-      // Report info section
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text(
-        `Generated: ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-        14,
-        40
-      );
-
+      const doc = createPdfDoc();
       const totalCost = personCosts.reduce((sum, p) => sum + p.totalCost, 0);
-      doc.text(`Total Cost: ₹${totalCost.toFixed(2)}`, 14, 45);
 
-      // Cost Summary Section
-      doc.setFontSize(14);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("COST PER PERSON", 14, 60);
+      let y = drawPdfHeader(doc, {
+        title: "Cost Report",
+        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
+        meta: format(new Date(), "MMM d, yyyy"),
+      });
+      y = drawBody(doc, `Total cost: ₹${totalCost.toFixed(2)}`, y, { muted: true });
+      y += 4;
 
-      // Person-wise cost table
+      y = drawSectionTitle(doc, "Cost per Person", y);
+
       const costData = personCosts.map((personCost) => [
         personCost.name,
         `₹${personCost.totalCost.toFixed(2)}`,
@@ -369,119 +349,42 @@ export default function MyCost() {
       ]);
 
       autoTable(doc, {
-        startY: 67,
-        head: [["Name", "Total Cost", "Expenses"]],
-        body: costData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [79, 70, 229], // Purple header
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-          fontSize: 10,
-          cellPadding: 5,
-        },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        styles: {
-          fontSize: 9,
-          cellPadding: 4,
-          lineColor: [200, 200, 200],
-          lineWidth: 0.5,
-          overflow: "linebreak",
-          cellWidth: "wrap",
-        },
-        columnStyles: {
-          0: { cellWidth: 100 },
-          1: { halign: "right", fontStyle: "bold", cellWidth: 60 },
-          2: { halign: "center", cellWidth: 30 },
-        },
-        margin: { left: 14, right: 14, top: 67 },
-        pageBreak: "auto",
-        rowPageBreak: "avoid",
-        showHead: "everyPage",
+        ...tableStyles({
+          startY: y + 2,
+          head: [["Name", "Total Cost", "Expenses"]],
+          body: costData,
+          columnStyles: {
+            1: { halign: "right", fontStyle: "bold" },
+            2: { halign: "center", cellWidth: 30 },
+          },
+          showHead: "everyPage",
+          rowPageBreak: "avoid",
+          didDrawPage: () => drawPdfFooter(doc),
+        }),
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || 67;
-
-      // Check if we need a new page for summary
-      let summaryStartY = finalY + 15;
+      const finalY = (doc as any).lastAutoTable?.finalY || y;
       const pageHeight = doc.internal.pageSize.height;
-      
+
+      let summaryStartY = finalY + 12;
       if (summaryStartY > pageHeight - 50) {
         doc.addPage();
         summaryStartY = 20;
       }
 
-      // Summary section
-      doc.setFontSize(14);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("SUMMARY", 14, summaryStartY);
-
-      doc.setFontSize(10);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "normal");
-      doc.text(
-        `Total People: ${personCosts.length}`,
-        14,
-        summaryStartY + 10
-      );
-      doc.text(
-        `Total Cost: ₹${totalCost.toFixed(2)}`,
-        14,
-        summaryStartY + 16
-      );
-      doc.text(
-        `Average Cost per Person: ₹${
-          personCosts.length > 0
-            ? (totalCost / personCosts.length).toFixed(2)
-            : "0.00"
+      let cy = drawSectionTitle(doc, "Summary", summaryStartY);
+      cy = drawBody(doc, `Total people: ${personCosts.length}`, cy + 4);
+      cy = drawBody(doc, `Total cost: ₹${totalCost.toFixed(2)}`, cy);
+      cy = drawBody(
+        doc,
+        `Average per person: ₹${
+          personCosts.length > 0 ? (totalCost / personCosts.length).toFixed(2) : "0.00"
         }`,
-        14,
-        summaryStartY + 22
+        cy
       );
-      doc.text(
-        `Total Expenses: ${expenses.length}`,
-        14,
-        summaryStartY + 28
-      );
+      cy = drawBody(doc, `Total expenses: ${expenses.length}`, cy);
 
-      // Footer - position dynamically based on content
-      const footerY = Math.min(pageHeight - 10, summaryStartY + 40);
-      
-      // Only add footer if there's space (at least 5mm from bottom)
-      if (footerY < pageHeight - 5) {
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.setFont(undefined, "normal");
-        const totalPages = doc.getNumberOfPages();
-        doc.text(
-          "Generated by ExpenseWaale - Expense Management System",
-          14,
-          footerY
-        );
-        doc.text(
-          `Page ${totalPages} of ${totalPages} • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-          180,
-          footerY
-        );
-      } else {
-        // If no space on current page, add footer on new page
-        doc.addPage();
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.setFont(undefined, "normal");
-        const totalPages = doc.getNumberOfPages();
-        doc.text(
-          "Generated by ExpenseWaale - Expense Management System",
-          14,
-          pageHeight - 10
-        );
-        doc.text(
-          `Page ${totalPages} of ${totalPages} • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-          180,
-          pageHeight - 10
-        );
-      }
+      drawPdfFooter(doc);
 
       doc.save(
         `cost_report_${selectedSplitSpace?.name || "all"}_${format(

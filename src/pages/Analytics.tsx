@@ -13,8 +13,16 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
-import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import {
+  drawPdfHeader,
+  drawPdfFooter,
+  drawSectionTitle,
+  drawBody,
+  tableStyles,
+  accentTableStyles,
+  createPdfDoc,
+} from "@/lib/pdfStyle";
 import { ExpenseTrendGraph } from "@/components/graphs/ExpenseTrendGraph";
 import {
   Select,
@@ -347,115 +355,85 @@ export default function Analytics() {
   const generateAnalyticsSummaryPDF = async () => {
     setPdfLoading("summary");
     try {
-      const doc = new jsPDF();
+      const doc = createPdfDoc();
+      const period = `${format(dateRange.from, "MMM d, yyyy")} – ${format(
+        dateRange.to,
+        "MMM d, yyyy"
+      )}`;
 
-      // Header
-      doc.setFillColor(59, 130, 246);
-      doc.rect(0, 0, 210, 30, "F");
-      doc.setFontSize(20);
-      doc.setTextColor(255, 255, 255);
-      doc.setFont(undefined, "bold");
-      doc.text("ANALYTICS SUMMARY", 14, 20);
+      let y = drawPdfHeader(doc, {
+        title: "Analytics Summary",
+        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
+        meta: format(new Date(), "MMM d, yyyy"),
+      });
+      y = drawBody(doc, `Period: ${period}`, y, { muted: true });
+      y += 4;
 
-      if (selectedSplitSpace) {
-        doc.setFontSize(12);
-        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 26);
-      }
-
-      doc.setFont(undefined, "normal");
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text(
-        `Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
-          dateRange.to,
-          "MMM dd, yyyy"
-        )}`,
-        14,
-        40
-      );
-      doc.text(`Generated: ${format(new Date(), "MMM dd, yyyy HH:mm")}`, 14, 45);
-
-      // Category Breakdown
-      doc.setFontSize(14);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("Category Breakdown", 14, 60);
+      y = drawSectionTitle(doc, "Category Breakdown", y);
 
       const categoryData = categoryTotals
         .filter((cat) => cat.total > 0)
         .sort((a, b) => b.total - a.total)
         .map((cat) => [
           cat.name,
-          `$${cat.total.toFixed(2)}`,
+          `₹${cat.total.toFixed(2)}`,
           `${cat.percentage.toFixed(1)}%`,
           cat.count.toString(),
         ]);
 
       autoTable(doc, {
-        startY: 65,
-        head: [["Category", "Total", "%", "Count"]],
-        body: categoryData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [79, 70, 229],
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-        },
-        columnStyles: {
-          1: { halign: "right" },
-          2: { halign: "right" },
-          3: { halign: "center" },
-        },
+        ...tableStyles({
+          startY: y + 2,
+          head: [["Category", "Total", "%", "Count"]],
+          body: categoryData,
+          columnStyles: {
+            1: { halign: "right", fontStyle: "bold" },
+            2: { halign: "right" },
+            3: { halign: "center" },
+          },
+          didDrawPage: () => drawPdfFooter(doc),
+        }),
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || 65;
+      const finalY = (doc as any).lastAutoTable?.finalY || y;
 
-      // Key Insights
-      doc.setFontSize(14);
-      doc.setFont(undefined, "bold");
-      doc.text("Key Insights", 14, finalY + 20);
-
-      doc.setFontSize(10);
-      doc.setFont(undefined, "normal");
-      doc.text(`Total Expenses: $${totalExpenses.toFixed(2)}`, 14, finalY + 30);
-      doc.text(
-        `Most Expensive Category: ${mostExpensiveCategory.name} ($${mostExpensiveCategory.total.toFixed(2)})`,
-        14,
-        finalY + 35
+      let cursorY = drawSectionTitle(doc, "Key Insights", finalY + 14);
+      cursorY = drawBody(doc, `Total expenses: ₹${totalExpenses.toFixed(2)}`, cursorY + 4);
+      cursorY = drawBody(
+        doc,
+        `Most expensive category: ${mostExpensiveCategory.name} (₹${mostExpensiveCategory.total.toFixed(2)})`,
+        cursorY
       );
-      doc.text(`Average per Day: $${avgPerDay.toFixed(2)}`, 14, finalY + 40);
-      doc.text(`Average per Person: $${avgPerPerson.toFixed(2)}`, 14, finalY + 45);
-      doc.text(`Fairness Score: ${fairnessScore.toFixed(1)}/100`, 14, finalY + 50);
+      cursorY = drawBody(doc, `Average per day: ₹${avgPerDay.toFixed(2)}`, cursorY);
+      cursorY = drawBody(doc, `Average per person: ₹${avgPerPerson.toFixed(2)}`, cursorY);
+      cursorY = drawBody(doc, `Fairness score: ${fairnessScore.toFixed(1)}/100`, cursorY);
 
-      // Top Days
       if (topDays.length > 0) {
-        doc.setFontSize(14);
-        doc.setFont(undefined, "bold");
-        doc.text("Top 5 Most Expensive Days", 14, finalY + 65);
+        cursorY = drawSectionTitle(doc, "Top 5 Most Expensive Days", cursorY + 8);
 
         const topDaysData = topDays.map((day, idx) => [
           `${idx + 1}`,
-          format(new Date(day.date), "MMM dd, yyyy"),
-          `$${day.total.toFixed(2)}`,
+          format(new Date(day.date), "MMM d, yyyy"),
+          `₹${day.total.toFixed(2)}`,
           day.count.toString(),
         ]);
 
         autoTable(doc, {
-          startY: finalY + 70,
-          head: [["#", "Date", "Total", "Expenses"]],
-          body: topDaysData,
-          theme: "grid",
-          headStyles: {
-            fillColor: [34, 197, 94],
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-          },
-          columnStyles: {
-            2: { halign: "right" },
-            3: { halign: "center" },
-          },
+          ...accentTableStyles({
+            startY: cursorY + 2,
+            head: [["#", "Date", "Total", "Expenses"]],
+            body: topDaysData,
+            columnStyles: {
+              0: { halign: "center", cellWidth: 14 },
+              2: { halign: "right", fontStyle: "bold" },
+              3: { halign: "center" },
+            },
+            didDrawPage: () => drawPdfFooter(doc),
+          }),
         });
       }
+
+      drawPdfFooter(doc);
 
       doc.save(
         `analytics_${format(dateRange.from, "yyyy-MM-dd")}_to_${format(

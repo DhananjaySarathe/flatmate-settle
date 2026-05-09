@@ -61,6 +61,16 @@ import {
   calculateSettlements as calcSettlements,
   buildShareSnapshot,
 } from "@/lib/settlement";
+import {
+  PDF_COLORS,
+  drawPdfHeader,
+  drawPdfFooter,
+  drawSectionTitle,
+  drawBody,
+  tableStyles,
+  accentTableStyles,
+  createPdfDoc,
+} from "@/lib/pdfStyle";
 
 interface Flatmate {
   id: string;
@@ -735,136 +745,70 @@ export default function Reports() {
   const generateAllExpensesPDF = async () => {
     setPdfLoading("all-expenses");
     try {
-      const doc = new jsPDF();
+      const doc = createPdfDoc();
+      const period = `${format(dateRange.from, "MMM d, yyyy")} – ${format(
+        dateRange.to,
+        "MMM d, yyyy"
+      )}`;
 
-      // Clean Professional Header
-      doc.setFillColor(59, 130, 246); // Blue header
-      doc.rect(0, 0, 210, 30, "F");
+      let y = drawPdfHeader(doc, {
+        title: "Expenses Report",
+        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
+        meta: format(new Date(), "MMM d, yyyy"),
+      });
 
-      doc.setFontSize(20);
-      doc.setTextColor(255, 255, 255);
-      doc.setFont(undefined, "bold");
-      doc.text("EXPENSEWAALE EXPENSES REPORT", 14, 20);
-
-      if (selectedSplitSpace) {
-        doc.setFontSize(12);
-        doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "normal");
-        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 26);
-      }
-
-      // Reset font
-      doc.setFont(undefined, "normal");
-
-      // Report info section
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text(
-        `Report Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
-          dateRange.to,
-          "MMM dd, yyyy"
-        )}`,
-        14,
-        40
-      );
-      doc.text(
-        `Generated: ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-        14,
-        45
-      );
-
+      y = drawBody(doc, `Period: ${period}`, y, { muted: true });
       const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-      doc.text(`Total Expenses: $${totalExpenses.toFixed(2)}`, 14, 50);
+      y = drawBody(doc, `Total: ₹${totalExpenses.toFixed(2)}  ·  ${expenses.length} expenses`, y, {
+        muted: true,
+      });
+      y += 4;
 
-      // Expenses table
       const tableData = expenses.map((expense) => {
         const paidBy = flatmates.find((f) => f.id === expense.paid_by);
         const splitBetween = expense.expense_splits
-          .map((split) => {
-            const flatmate = flatmates.find((f) => f.id === split.flatmate_id);
-            return flatmate?.name;
-          })
+          .map((split) => flatmates.find((f) => f.id === split.flatmate_id)?.name)
+          .filter(Boolean)
           .join(", ");
-
         const splitAmount = expense.amount / expense.expense_splits.length;
-
         return [
-          format(new Date(expense.date), "MMM dd, yyyy"),
+          format(new Date(expense.date), "MMM d, yyyy"),
           expense.title,
           paidBy?.name || "Unknown",
           splitBetween,
-          `$${splitAmount.toFixed(2)}`,
-          `$${expense.amount.toFixed(2)}`,
+          `₹${splitAmount.toFixed(2)}`,
+          `₹${expense.amount.toFixed(2)}`,
         ];
       });
 
       autoTable(doc, {
-        startY: 65,
-        head: [
-          [
-            "Date",
-            "Description",
-            "Paid By",
-            "Split Between",
-            "Share Each",
-            "Total Amount",
-          ],
-        ],
-        body: tableData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [79, 70, 229], // Purple header
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-          fontSize: 10,
-          cellPadding: 4,
-        },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        styles: {
-          fontSize: 9,
-          cellPadding: 4,
-          lineColor: [200, 200, 200],
-          lineWidth: 0.5,
-        },
-        columnStyles: {
-          4: { halign: "right" },
-          5: { halign: "right", fontStyle: "bold" },
-        },
-        margin: { left: 14, right: 14 },
+        ...tableStyles({
+          startY: y,
+          head: [["Date", "Description", "Paid By", "Split Between", "Per Person", "Total"]],
+          body: tableData,
+          columnStyles: {
+            4: { halign: "right" },
+            5: { halign: "right", fontStyle: "bold" },
+          },
+          didDrawPage: () => drawPdfFooter(doc),
+        }),
       });
 
-      // Summary section
-      const finalY = (doc as any).lastAutoTable?.finalY || 65;
-      doc.setFontSize(14);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("SUMMARY", 14, finalY + 20);
+      const finalY = (doc as any).lastAutoTable?.finalY || y;
+      const summaryY = finalY + 12;
 
-      doc.setFontSize(10);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "normal");
-      doc.text(`Total Number of Expenses: ${expenses.length}`, 14, finalY + 30);
-      doc.text(`Total Amount: $${totalExpenses.toFixed(2)}`, 14, finalY + 35);
-      doc.text(
-        `Average per Expense: $${(totalExpenses / expenses.length).toFixed(2)}`,
-        14,
-        finalY + 40
-      );
+      drawSectionTitle(doc, "Summary", summaryY);
+      drawBody(doc, `Total expenses: ${expenses.length}`, summaryY + 8);
+      drawBody(doc, `Total amount: ₹${totalExpenses.toFixed(2)}`, summaryY + 14);
+      if (expenses.length > 0) {
+        drawBody(
+          doc,
+          `Average per expense: ₹${(totalExpenses / expenses.length).toFixed(2)}`,
+          summaryY + 20
+        );
+      }
 
-      // Footer
-      doc.setFontSize(8);
-      doc.setTextColor(100, 100, 100);
-      doc.setFont(undefined, "normal");
-      doc.text(
-        "Generated by ExpenseWaale - Expense Management System",
-        14,
-        290
-      );
-      doc.text(
-        `Page 1 of 1 • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-        180,
-        290
-      );
+      drawPdfFooter(doc);
 
       doc.save(
         `expenses_${format(dateRange.from, "yyyy-MM-dd")}_to_${format(
@@ -884,186 +828,106 @@ export default function Reports() {
   const generateSummaryPDF = async () => {
     setPdfLoading("summary");
     try {
-      const doc = new jsPDF();
+      const doc = createPdfDoc();
+      const period = `${format(dateRange.from, "MMM d, yyyy")} – ${format(
+        dateRange.to,
+        "MMM d, yyyy"
+      )}`;
 
-      // Clean Professional Header
-      doc.setFillColor(59, 130, 246); // Blue header
-      doc.rect(0, 0, 210, 30, "F");
+      let y = drawPdfHeader(doc, {
+        title: "Settlement Report",
+        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
+        meta: format(new Date(), "MMM d, yyyy"),
+      });
 
-      doc.setFontSize(20);
-      doc.setTextColor(255, 255, 255);
-      doc.setFont(undefined, "bold");
-      doc.text("EXPENSEWAALE SETTLEMENT REPORT", 14, 20);
-
-      if (selectedSplitSpace) {
-        doc.setFontSize(12);
-        doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "normal");
-        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 26);
-      }
-
-      // Reset font
-      doc.setFont(undefined, "normal");
-
-      // Report info section
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text(
-        `Report Period: ${format(dateRange.from, "MMM dd, yyyy")} - ${format(
-          dateRange.to,
-          "MMM dd, yyyy"
-        )}`,
-        14,
-        40
-      );
-      doc.text(
-        `Generated: ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-        14,
-        45
-      );
-
+      y = drawBody(doc, `Period: ${period}`, y, { muted: true });
       const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-      doc.text(`Total Expenses: $${totalExpenses.toFixed(2)}`, 14, 50);
+      y = drawBody(doc, `Total expenses: ₹${totalExpenses.toFixed(2)}`, y, { muted: true });
+      y += 4;
 
-      // Balance Summary Section
-      doc.setFontSize(14);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("BALANCE SUMMARY", 14, 65);
+      y = drawSectionTitle(doc, "Balance Summary", y);
 
-      // User-wise balance table
       const balanceData = balances.map((balance) => [
         balance.name,
-        `$${balance.totalPaid.toFixed(2)}`,
-        `$${balance.totalOwed.toFixed(2)}`,
+        `₹${balance.totalPaid.toFixed(2)}`,
+        `₹${balance.totalOwed.toFixed(2)}`,
         balance.balance >= 0
-          ? `+$${balance.balance.toFixed(2)}`
-          : `-$${Math.abs(balance.balance).toFixed(2)}`,
-        balance.balance > 0
-          ? "Owes Money"
-          : balance.balance < 0
-          ? "Needs Money"
+          ? `+₹${balance.balance.toFixed(2)}`
+          : `-₹${Math.abs(balance.balance).toFixed(2)}`,
+        balance.balance > 0.01
+          ? "Is owed"
+          : balance.balance < -0.01
+          ? "Owes"
           : "Settled",
       ]);
 
       autoTable(doc, {
-        startY: 72,
-        head: [["Name", "Total Paid", "Total Owed", "Net Balance", "Status"]],
-        body: balanceData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [79, 70, 229], // Purple header
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-          fontSize: 10,
-          cellPadding: 5,
-        },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        styles: {
-          fontSize: 9,
-          cellPadding: 4,
-          lineColor: [200, 200, 200],
-          lineWidth: 0.5,
-        },
-        columnStyles: {
-          1: { halign: "right" },
-          2: { halign: "right" },
-          3: { halign: "right", fontStyle: "bold" },
-          4: { halign: "center" },
-        },
-        margin: { left: 14, right: 14 },
+        ...tableStyles({
+          startY: y + 2,
+          head: [["Name", "Paid", "Owed", "Net", "Status"]],
+          body: balanceData,
+          columnStyles: {
+            1: { halign: "right" },
+            2: { halign: "right" },
+            3: { halign: "right", fontStyle: "bold" },
+            4: { halign: "center" },
+          },
+          didDrawPage: () => drawPdfFooter(doc),
+        }),
       });
 
-      const finalY1 = (doc as any).lastAutoTable?.finalY || 72;
-
-      // Settlement Instructions Section
-      doc.setFontSize(14);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("SETTLEMENT INSTRUCTIONS", 14, finalY1 + 15);
+      const finalY1 = (doc as any).lastAutoTable?.finalY || y;
 
       if (settlements.length > 0) {
+        let cursorY = drawSectionTitle(doc, "Settlement Instructions", finalY1 + 12);
+
         const settlementData = settlements.map((s, index) => [
           `${index + 1}`,
           s.from,
           s.to,
-          `$${s.amount.toFixed(2)}`,
+          `₹${s.amount.toFixed(2)}`,
         ]);
 
         autoTable(doc, {
-          startY: finalY1 + 22,
-          head: [["#", "From", "To", "Amount"]],
-          body: settlementData,
-          theme: "grid",
-          headStyles: {
-            fillColor: [34, 197, 94], // Green header
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-            fontSize: 10,
-            cellPadding: 5,
-          },
-          alternateRowStyles: { fillColor: [240, 253, 244] },
-          styles: {
-            fontSize: 9,
-            cellPadding: 4,
-            lineColor: [200, 200, 200],
-            lineWidth: 0.5,
-          },
-          columnStyles: {
-            1: { halign: "center" },
-            2: { halign: "left" },
-            3: { halign: "left" },
-            4: { halign: "right", fontStyle: "bold" },
-          },
-          margin: { left: 14, right: 14 },
+          ...accentTableStyles({
+            startY: cursorY + 2,
+            head: [["#", "From", "To", "Amount"]],
+            body: settlementData,
+            columnStyles: {
+              0: { halign: "center", cellWidth: 14 },
+              1: { halign: "left" },
+              2: { halign: "left" },
+              3: { halign: "right", fontStyle: "bold" },
+            },
+            didDrawPage: () => drawPdfFooter(doc),
+          }),
         });
 
-        const finalY2 = (doc as any).lastAutoTable?.finalY || finalY1 + 22;
+        const finalY2 = (doc as any).lastAutoTable?.finalY || cursorY;
+        const totalSettlements = settlements.reduce((s, x) => s + x.amount, 0);
 
-        // Settlement Complete Summary Box
-        doc.setFillColor(34, 197, 94); // Green background
-        doc.rect(14, finalY2 + 10, 182, 25, "F");
-
-        doc.setFontSize(12);
+        // Sage callout box
+        doc.setFillColor(...PDF_COLORS.accent);
+        doc.roundedRect(14, finalY2 + 8, 182, 22, 2, 2, "F");
         doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "bold");
-        doc.text("SETTLEMENT COMPLETE!", 16, finalY2 + 20);
-
-        doc.setFontSize(10);
-        doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "normal");
-
-        const totalSettlements = settlements.reduce(
-          (sum, s) => sum + s.amount,
-          0
-        );
-
-        doc.text(`Total Transactions: ${settlements.length}`, 16, finalY2 + 26);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text("Settlement Plan Ready", 18, finalY2 + 16);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
         doc.text(
-          `Total Amount: $${totalSettlements.toFixed(2)}`,
-          16,
-          finalY2 + 31
-        );
-        doc.text(
-          `Average per Transaction: $${(
+          `${settlements.length} transactions  ·  ₹${totalSettlements.toFixed(2)} total  ·  ₹${(
             totalSettlements / settlements.length
-          ).toFixed(2)}`,
-          16,
-          finalY2 + 36
+          ).toFixed(2)} avg`,
+          18,
+          finalY2 + 24
         );
 
-        // Add User-wise Transaction Details
-        doc.setFontSize(14);
-        doc.setTextColor(0, 0, 0);
-        doc.setFont(undefined, "bold");
-        doc.text("USER-WISE TRANSACTION DETAILS", 14, finalY2 + 50);
+        // User-wise breakdown
+        cursorY = drawSectionTitle(doc, "User-wise Transaction Details", finalY2 + 42);
 
-        // Group expenses by flatmate for detailed breakdown
-        const userExpenseMap = new Map<
-          string,
-          { name: string; expenses: any[]; totalPaid: number }
-        >();
-
+        type UserBreak = { name: string; expenses: typeof expenses; totalPaid: number };
+        const userExpenseMap = new Map<string, UserBreak>();
         balances.forEach((balance) => {
           userExpenseMap.set(balance.id, {
             name: balance.name,
@@ -1071,123 +935,92 @@ export default function Reports() {
             totalPaid: balance.totalPaid,
           });
         });
-
         expenses.forEach((expense) => {
-          const user = userExpenseMap.get(expense.paid_by);
-          if (user) {
-            user.expenses.push(expense);
-          }
+          const u = userExpenseMap.get(expense.paid_by);
+          if (u) u.expenses.push(expense);
         });
 
-        let currentY = finalY2 + 58;
-
-        userExpenseMap.forEach((userData, userId) => {
-          // User header
-          doc.setFillColor(240, 240, 240);
-          doc.rect(14, currentY, 182, 8, "F");
-
+        userExpenseMap.forEach((userData) => {
+          // User name banner
+          doc.setFillColor(...PDF_COLORS.surfaceAlt);
+          doc.rect(14, cursorY, 182, 8, "F");
+          doc.setFont("helvetica", "bold");
           doc.setFontSize(10);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont(undefined, "bold");
-          doc.text(userData.name, 16, currentY + 6);
-
-          currentY += 12;
+          doc.setTextColor(...PDF_COLORS.text);
+          doc.text(
+            `${userData.name}  ·  Total paid ₹${userData.totalPaid.toFixed(2)}`,
+            16,
+            cursorY + 6
+          );
+          cursorY += 11;
 
           if (userData.expenses.length > 0) {
-            // Expenses table for this user
-            const userExpenseData = userData.expenses.map((expense) => [
-              format(new Date(expense.date), "MMM dd"),
-              expense.title,
-              `$${expense.amount.toFixed(2)}`,
-              `${expense.expense_splits.length} people`,
+            const userExpenseData = userData.expenses.map((e) => [
+              format(new Date(e.date), "MMM d"),
+              e.title,
+              `₹${e.amount.toFixed(2)}`,
+              `${e.expense_splits.length} people`,
             ]);
 
             autoTable(doc, {
-              startY: currentY,
-              head: [["Date", "Description", "Amount", "Split Between"]],
-              body: userExpenseData,
-              theme: "grid",
-              headStyles: {
-                fillColor: [79, 70, 229],
-                textColor: [255, 255, 255],
-                fontStyle: "bold",
-                fontSize: 8,
-                cellPadding: 3,
-              },
-              styles: {
-                fontSize: 8,
-                cellPadding: 3,
-                lineColor: [200, 200, 200],
-                lineWidth: 0.3,
-              },
-              columnStyles: {
-                2: { halign: "right", fontStyle: "bold" },
-                3: { halign: "center" },
-              },
-              margin: { left: 14, right: 14 },
-              tableWidth: "auto",
+              ...tableStyles({
+                startY: cursorY,
+                head: [["Date", "Description", "Amount", "Split"]],
+                body: userExpenseData,
+                styles: {
+                  font: "helvetica",
+                  fontSize: 8,
+                  cellPadding: 2.5,
+                  textColor: PDF_COLORS.text,
+                  lineColor: PDF_COLORS.border,
+                  lineWidth: 0.1,
+                },
+                headStyles: {
+                  fillColor: PDF_COLORS.primary,
+                  textColor: [255, 255, 255],
+                  fontStyle: "bold",
+                  fontSize: 8.5,
+                  halign: "left",
+                },
+                columnStyles: {
+                  2: { halign: "right", fontStyle: "bold" },
+                  3: { halign: "center" },
+                },
+                didDrawPage: () => drawPdfFooter(doc),
+              }),
             });
 
-            currentY = (doc as any).lastAutoTable?.finalY || currentY + 20;
-            currentY += 8;
+            cursorY = (doc as any).lastAutoTable?.finalY || cursorY + 12;
+            cursorY += 6;
           } else {
+            doc.setFont("helvetica", "italic");
             doc.setFontSize(9);
-            doc.setTextColor(150, 150, 150);
-            doc.setFont(undefined, "normal");
-            doc.text("No expenses paid by this user", 16, currentY + 5);
-            currentY += 12;
+            doc.setTextColor(...PDF_COLORS.textMuted);
+            doc.text("No expenses paid by this user", 16, cursorY + 5);
+            cursorY += 12;
+          }
+
+          // Page-break safety
+          if (cursorY > 270) {
+            drawPdfFooter(doc);
+            doc.addPage();
+            cursorY = 20;
           }
         });
-
-        // Footer
-        const finalContentY = Math.max(currentY + 10, 280);
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.setFont(undefined, "normal");
-        doc.text(
-          "Generated by ExpenseWaale - Expense Management System",
-          14,
-          finalContentY
-        );
-        doc.text(
-          `Page 1 of 1 • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-          180,
-          finalContentY
-        );
       } else {
-        // All Settled Up message
-        doc.setFillColor(34, 197, 94);
-        doc.rect(14, finalY1 + 22, 182, 20, "F");
-
+        // All Settled callout
+        doc.setFillColor(...PDF_COLORS.accent);
+        doc.roundedRect(14, finalY1 + 14, 182, 22, 2, 2, "F");
+        doc.setFont("helvetica", "bold");
         doc.setFontSize(12);
         doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "bold");
-        doc.text("ALL SETTLED UP!", 16, finalY1 + 32);
-
-        doc.setFontSize(10);
-        doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, "normal");
-        doc.text(
-          "No money needs to be transferred between flatmates.",
-          16,
-          finalY1 + 38
-        );
-
-        // Footer
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.setFont(undefined, "normal");
-        doc.text(
-          "Generated by ExpenseWaale - Expense Management System",
-          14,
-          290
-        );
-        doc.text(
-          `Page 1 of 1 • ${format(new Date(), "MMM dd, yyyy HH:mm")}`,
-          180,
-          290
-        );
+        doc.text("All Settled Up", 18, finalY1 + 22);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text("No money needs to be transferred between flatmates.", 18, finalY1 + 30);
       }
+
+      drawPdfFooter(doc);
 
       doc.save(
         `summary_${format(dateRange.from, "yyyy-MM-dd")}_to_${format(

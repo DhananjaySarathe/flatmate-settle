@@ -79,10 +79,10 @@ const Layout = ({ children }: LayoutProps) => {
       <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-card/80 backdrop-blur-xl">
         <div className="container flex h-16 items-center justify-between px-4">
           <Link to="/dashboard" className="flex items-center space-x-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary to-blue-500 rounded-xl flex items-center justify-center shadow-lg shadow-primary/30">
-              <Wallet className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 bg-gradient-to-br from-primary to-amber-500 rounded-xl flex items-center justify-center shadow-md shadow-primary/20">
+              <Wallet className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="text-xl font-bold gradient-text hidden sm:inline">
+            <span className="text-lg sm:text-xl font-bold gradient-text">
               ExpenseWaale
             </span>
           </Link>
@@ -196,7 +196,7 @@ const Layout = ({ children }: LayoutProps) => {
       </header>
 
       {/* Main Content */}
-      <main className="container px-4 py-8">{children}</main>
+      <main className="container px-4 py-6 sm:py-8">{children}</main>
     </div>
   );
 };

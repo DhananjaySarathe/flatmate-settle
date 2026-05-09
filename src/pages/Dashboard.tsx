@@ -181,15 +181,17 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
-      <div className="flex items-center justify-between">
+    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-4xl font-bold gradient-text mb-2">Dashboard</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-2">Dashboard</h1>
+          <p className="text-muted-foreground text-sm sm:text-base">
             Manage your flatmates and view expense overview
           </p>
           {selectedSplitSpace && (
-            <p className="text-sm text-muted-foreground mt-1">SplitSpace: {selectedSplitSpace.name}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              SplitSpace: {selectedSplitSpace.name}
+            </p>
           )}
         </div>
         <Dialog
@@ -200,7 +202,7 @@ const Dashboard = () => {
           }}
         >
           <DialogTrigger asChild>
-            <Button className="bg-gradient-to-r from-primary to-blue-500 hover:opacity-90 shadow-lg shadow-primary/30">
+            <Button className="shadow-md shadow-primary/20 self-start sm:self-auto">
               <Plus className="w-4 h-4 mr-2" />
               Add Flatmate
             </Button>
@@ -255,7 +257,7 @@ const Dashboard = () => {
               </div>
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-primary to-blue-500"
+                className="w-full"
                 disabled={submitLoading}
               >
                 {submitLoading ? (

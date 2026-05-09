@@ -6,8 +6,16 @@ import { Badge } from "@/components/ui/badge";
 import { Trophy, Medal, Award, Crown, Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
-import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import {
+  drawPdfHeader,
+  drawPdfFooter,
+  drawSectionTitle,
+  tableStyles,
+  accentTableStyles,
+  createPdfDoc,
+} from "@/lib/pdfStyle";
+import { format } from "date-fns";
 
 interface Flatmate {
   id: string;
@@ -170,80 +178,63 @@ export default function Leaderboard() {
   const generateLeaderboardPDF = async () => {
     setPdfLoading(true);
     try {
-      const doc = new jsPDF();
+      const doc = createPdfDoc();
 
-      // Header
-      doc.setFillColor(255, 193, 7);
-      doc.rect(0, 0, 210, 35, "F");
-      doc.setFontSize(24);
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, "bold");
-      doc.text("LEADERBOARD", 14, 20);
-      doc.setFontSize(12);
-      if (selectedSplitSpace) {
-        doc.text(`SplitSpace: ${selectedSplitSpace.name}`, 14, 28);
-      }
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 33);
+      let y = drawPdfHeader(doc, {
+        title: "Leaderboard",
+        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
+        meta: format(new Date(), "MMM d, yyyy"),
+      });
 
-      // Top 3 Payers
-      doc.setFontSize(16);
-      doc.setFont(undefined, "bold");
-      doc.text("Top 3 Payers", 14, 45);
+      y = drawSectionTitle(doc, "Top 3 Payers", y);
 
       const topPayersData = topPayers.map((person, idx) => [
-        idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉",
+        idx === 0 ? "Gold" : idx === 1 ? "Silver" : "Bronze",
         person.name,
-        `$${person.totalPaid.toFixed(2)}`,
+        `₹${person.totalPaid.toFixed(2)}`,
         person.expenseCount.toString(),
       ]);
 
       autoTable(doc, {
-        startY: 50,
-        head: [["Rank", "Name", "Total Paid", "Expenses"]],
-        body: topPayersData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [255, 193, 7],
-          textColor: [0, 0, 0],
-          fontStyle: "bold",
-        },
-        columnStyles: {
-          2: { halign: "right" },
-          3: { halign: "center" },
-        },
+        ...accentTableStyles({
+          startY: y + 2,
+          head: [["Rank", "Name", "Total Paid", "Expenses"]],
+          body: topPayersData,
+          columnStyles: {
+            0: { fontStyle: "bold" },
+            2: { halign: "right", fontStyle: "bold" },
+            3: { halign: "center" },
+          },
+          didDrawPage: () => drawPdfFooter(doc),
+        }),
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || 50;
+      const finalY = (doc as any).lastAutoTable?.finalY || y;
 
-      // Fun Stats
-      doc.setFontSize(16);
-      doc.setFont(undefined, "bold");
-      doc.text("Fun Stats & Badges", 14, finalY + 15);
+      const sectionY = drawSectionTitle(doc, "Fun Stats & Badges", finalY + 14);
 
       const funStatsData = [
-        ["Most Generous", mostGenerous?.name || "N/A", `$${mostGenerous?.totalPaid.toFixed(2) || "0.00"}`],
-        ["Silent Assassin", silentAssassin?.name || "N/A", `$${silentAssassin?.totalPaid.toFixed(2) || "0.00"}`],
-        ["Big Spender", bigSpender?.name || "N/A", `$${bigSpender?.highestExpense.toFixed(2) || "0.00"}`],
-        ["Milk Bhai (Groceries)", milkBhai.name, `$${milkBhai.total.toFixed(2)}`],
-        ["Fuel King", fuelKing.name, `$${fuelKing.total.toFixed(2)}`],
-        ["Foodie", foodie.name, `$${foodie.total.toFixed(2)}`],
+        ["Most Generous", mostGenerous?.name || "N/A", `₹${mostGenerous?.totalPaid.toFixed(2) || "0.00"}`],
+        ["Silent Assassin", silentAssassin?.name || "N/A", `₹${silentAssassin?.totalPaid.toFixed(2) || "0.00"}`],
+        ["Big Spender", bigSpender?.name || "N/A", `₹${bigSpender?.highestExpense.toFixed(2) || "0.00"}`],
+        ["Milk Bhai (Groceries)", milkBhai.name, `₹${milkBhai.total.toFixed(2)}`],
+        ["Fuel King", fuelKing.name, `₹${fuelKing.total.toFixed(2)}`],
+        ["Foodie", foodie.name, `₹${foodie.total.toFixed(2)}`],
       ];
 
       autoTable(doc, {
-        startY: finalY + 20,
-        head: [["Badge", "Winner", "Amount"]],
-        body: funStatsData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [79, 70, 229],
-          textColor: [255, 255, 255],
-          fontStyle: "bold",
-        },
-        columnStyles: {
-          2: { halign: "right" },
-        },
+        ...tableStyles({
+          startY: sectionY + 2,
+          head: [["Badge", "Winner", "Amount"]],
+          body: funStatsData,
+          columnStyles: {
+            2: { halign: "right", fontStyle: "bold" },
+          },
+          didDrawPage: () => drawPdfFooter(doc),
+        }),
       });
 
+      drawPdfFooter(doc);
       doc.save(`leaderboard_${selectedSplitSpace?.name || "default"}.pdf`);
       toast.success("Leaderboard PDF downloaded successfully!");
     } catch (error) {

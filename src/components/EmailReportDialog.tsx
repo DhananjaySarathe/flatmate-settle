@@ -263,7 +263,7 @@ const EmailReportDialog = ({
                 flatmatesWithEmails.length === 0 ||
                 sending
               }
-              className="flex-1 bg-gradient-to-r from-primary to-blue-500 hover:opacity-90"
+              className="flex-1"
             >
               {sending ? (
                 <>
