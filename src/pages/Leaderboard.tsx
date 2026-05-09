@@ -3,7 +3,21 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, Medal, Award, Crown, Download, Loader2 } from "lucide-react";
+import {
+  Trophy,
+  Medal,
+  Award,
+  Crown,
+  Download,
+  Loader2,
+  Sparkles,
+  Heart,
+  Flame,
+  Pizza,
+  ShoppingBasket,
+  Fuel,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 import autoTable from "jspdf-autotable";
@@ -266,20 +280,28 @@ export default function Leaderboard() {
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+    <div className="container mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
-            <Trophy className="w-6 h-6 sm:w-8 sm:h-8 text-yellow-500" />
+          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1 flex items-center gap-2">
+            <Trophy className="w-7 h-7 sm:w-9 sm:h-9 text-amber-500" />
             Leaderboard
           </h1>
+          <p className="text-sm sm:text-base text-muted-foreground">
+            Brag rights, fairly distributed.
+          </p>
           {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               SplitSpace: {selectedSplitSpace.name}
             </p>
           )}
         </div>
-        <Button onClick={generateLeaderboardPDF} disabled={pdfLoading}>
+        <Button
+          onClick={generateLeaderboardPDF}
+          disabled={pdfLoading}
+          variant="outline"
+          className="self-start sm:self-auto"
+        >
           {pdfLoading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -294,180 +316,138 @@ export default function Leaderboard() {
         </Button>
       </div>
 
-      {/* Top 3 Payers */}
+      {/* Podium */}
       {topPayers.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-3">
-          {topPayers.map((person, idx) => (
-            <Card
-              key={person.id}
-              className={`${
-                idx === 0
-                  ? "border-yellow-500 border-2 bg-yellow-50 dark:bg-yellow-950"
-                  : idx === 1
-                  ? "border-gray-400 border-2 bg-gray-50 dark:bg-gray-900"
-                  : "border-orange-600 border-2 bg-orange-50 dark:bg-orange-950"
-              }`}
-            >
-              <CardHeader>
-                <CardTitle className="flex items-center justify-center gap-2">
-                  {idx === 0 ? (
-                    <Crown className="w-6 h-6 text-yellow-500" />
-                  ) : idx === 1 ? (
-                    <Medal className="w-6 h-6 text-gray-400" />
-                  ) : (
-                    <Award className="w-6 h-6 text-orange-600" />
-                  )}
-                  {idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉"} Place
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <div className="text-2xl font-bold mb-2">{person.name}</div>
-                <div className="text-lg text-muted-foreground">
-                  ${person.totalPaid.toFixed(2)}
-                </div>
-                <div className="text-sm text-muted-foreground mt-1">
-                  {person.expenseCount} expense{person.expenseCount !== 1 ? "s" : ""}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <Card className="overflow-hidden">
+          <CardContent className="p-4 sm:p-8">
+            <div className="grid grid-cols-3 gap-2 sm:gap-4 items-end">
+              {/* 2nd place */}
+              {topPayers[1] ? (
+                <PodiumStep place={2} person={topPayers[1]} />
+              ) : (
+                <PodiumPlaceholder place={2} />
+              )}
+              {/* 1st place — taller */}
+              <PodiumStep place={1} person={topPayers[0]} />
+              {/* 3rd place */}
+              {topPayers[2] ? (
+                <PodiumStep place={3} person={topPayers[2]} />
+              ) : (
+                <PodiumPlaceholder place={3} />
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Fun Stats */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {mostGenerous && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-yellow-500" />
-                Most Generous
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{mostGenerous.name}</div>
-              <div className="text-muted-foreground">
-                ${mostGenerous.totalPaid.toFixed(2)} total
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {silentAssassin && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-blue-500" />
-                Silent Assassin
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{silentAssassin.name}</div>
-              <div className="text-muted-foreground">
-                ${silentAssassin.totalPaid.toFixed(2)} (least paid, still active)
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {bigSpender && bigSpender.highestExpense > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-red-500" />
-                Big Spender
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{bigSpender.name}</div>
-              <div className="text-muted-foreground">
-                ${bigSpender.highestExpense.toFixed(2)} (highest single expense)
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {milkBhai.total > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-green-500" />
-                Milk Bhai
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{milkBhai.name}</div>
-              <div className="text-muted-foreground">
-                ${milkBhai.total.toFixed(2)} on Groceries
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {fuelKing.total > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-orange-500" />
-                Fuel King
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{fuelKing.name}</div>
-              <div className="text-muted-foreground">
-                ${fuelKing.total.toFixed(2)} on Fuel
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {foodie.total > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-pink-500" />
-                Foodie
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl font-bold">{foodie.name}</div>
-              <div className="text-muted-foreground">
-                ${foodie.total.toFixed(2)} on Food
-              </div>
-            </CardContent>
-          </Card>
-        )}
+      {/* Fun Stats / Badges */}
+      <div>
+        <h2 className="text-xl sm:text-2xl font-bold mb-3 flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-primary" />
+          Badges & Fun Stats
+        </h2>
+        <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {mostGenerous && (
+            <BadgeCard
+              icon={Heart}
+              emoji="💖"
+              title="Most Generous"
+              subtitle={`₹${mostGenerous.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })} paid in total`}
+              name={mostGenerous.name}
+              tone="rose"
+            />
+          )}
+          {silentAssassin && (
+            <BadgeCard
+              icon={Award}
+              emoji="🥷"
+              title="Silent Assassin"
+              subtitle={`Only ₹${silentAssassin.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })} — still in the game`}
+              name={silentAssassin.name}
+              tone="slate"
+            />
+          )}
+          {bigSpender && bigSpender.highestExpense > 0 && (
+            <BadgeCard
+              icon={Flame}
+              emoji="💥"
+              title="Big Spender"
+              subtitle={`₹${bigSpender.highestExpense.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on a single expense`}
+              name={bigSpender.name}
+              tone="amber"
+            />
+          )}
+          {milkBhai.total > 0 && (
+            <BadgeCard
+              icon={ShoppingBasket}
+              emoji="🥛"
+              title="Milk Bhai"
+              subtitle={`₹${milkBhai.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on groceries`}
+              name={milkBhai.name}
+              tone="accent"
+            />
+          )}
+          {fuelKing.total > 0 && (
+            <BadgeCard
+              icon={Fuel}
+              emoji="⛽"
+              title="Fuel King"
+              subtitle={`₹${fuelKing.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on fuel`}
+              name={fuelKing.name}
+              tone="orange"
+            />
+          )}
+          {foodie.total > 0 && (
+            <BadgeCard
+              icon={Pizza}
+              emoji="🍕"
+              title="Foodie"
+              subtitle={`₹${foodie.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on food`}
+              name={foodie.name}
+              tone="primary"
+            />
+          )}
+        </div>
       </div>
 
-      {/* Full Leaderboard */}
+      {/* Full rankings */}
       {personStats.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Full Rankings</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Everyone, sorted by total paid
+            </p>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               {personStats.map((person, idx) => (
                 <div
                   key={person.id}
-                  className="flex items-center justify-between p-3 bg-secondary/30 rounded-lg"
+                  className={cn(
+                    "flex items-center justify-between p-3 rounded-lg border transition-colors",
+                    idx === 0
+                      ? "bg-amber-50 border-amber-200"
+                      : "bg-secondary/40 border-border"
+                  )}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold text-lg w-8">
-                      {idx + 1 <= 3 ? (idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉") : `#${idx + 1}`}
-                    </span>
-                    <div>
-                      <div className="font-semibold">{person.name}</div>
-                      <div className="text-sm text-muted-foreground">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <RankBadge rank={idx + 1} />
+                    <Avatar name={person.name} />
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate">{person.name}</div>
+                      <div className="text-xs text-muted-foreground">
                         {person.expenseCount} expense{person.expenseCount !== 1 ? "s" : ""}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-bold text-lg">${person.totalPaid.toFixed(2)}</div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="font-bold text-base sm:text-lg tabular-nums">
+                      ₹{person.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                    </div>
                     {person.highestExpense > 0 && (
                       <div className="text-xs text-muted-foreground">
-                        Max: ${person.highestExpense.toFixed(2)}
+                        Max ₹{person.highestExpense.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
                       </div>
                     )}
                   </div>
@@ -478,6 +458,244 @@ export default function Leaderboard() {
         </Card>
       )}
     </div>
+  );
+}
+
+// ---- Sub-components ----
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return (parts[0]?.[0] ?? "?").toUpperCase() + (parts[1]?.[0]?.toUpperCase() ?? "");
+}
+
+function avatarColor(name: string): string {
+  const palette = [
+    "bg-rose-100 text-rose-700",
+    "bg-amber-100 text-amber-800",
+    "bg-emerald-100 text-emerald-800",
+    "bg-sky-100 text-sky-700",
+    "bg-violet-100 text-violet-700",
+    "bg-orange-100 text-orange-800",
+    "bg-teal-100 text-teal-700",
+  ];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h + name.charCodeAt(i)) % palette.length;
+  return palette[h];
+}
+
+function Avatar({ name, size = "md" }: { name: string; size?: "md" | "lg" }) {
+  const dim = size === "lg" ? "w-14 h-14 text-base" : "w-9 h-9 text-xs";
+  return (
+    <div
+      className={cn(
+        "rounded-full flex items-center justify-center font-bold flex-shrink-0",
+        dim,
+        avatarColor(name)
+      )}
+    >
+      {initials(name)}
+    </div>
+  );
+}
+
+function RankBadge({ rank }: { rank: number }) {
+  if (rank === 1)
+    return (
+      <div className="w-8 h-8 rounded-full bg-amber-400 text-amber-950 flex items-center justify-center text-sm font-bold flex-shrink-0">
+        🥇
+      </div>
+    );
+  if (rank === 2)
+    return (
+      <div className="w-8 h-8 rounded-full bg-slate-300 text-slate-800 flex items-center justify-center text-sm font-bold flex-shrink-0">
+        🥈
+      </div>
+    );
+  if (rank === 3)
+    return (
+      <div className="w-8 h-8 rounded-full bg-orange-300 text-orange-900 flex items-center justify-center text-sm font-bold flex-shrink-0">
+        🥉
+      </div>
+    );
+  return (
+    <div className="w-8 h-8 rounded-full bg-secondary text-muted-foreground flex items-center justify-center text-sm font-semibold flex-shrink-0">
+      #{rank}
+    </div>
+  );
+}
+
+function PodiumStep({ place, person }: { place: 1 | 2 | 3; person: PersonStats }) {
+  const config = {
+    1: {
+      height: "h-32 sm:h-40",
+      bg: "bg-gradient-to-b from-amber-300 to-amber-200",
+      border: "border-amber-400",
+      icon: <Crown className="w-5 h-5 sm:w-6 sm:h-6 text-amber-700" />,
+      label: "1st",
+      labelClass: "bg-amber-500 text-amber-50",
+    },
+    2: {
+      height: "h-24 sm:h-32",
+      bg: "bg-gradient-to-b from-slate-200 to-slate-100",
+      border: "border-slate-300",
+      icon: <Medal className="w-5 h-5 sm:w-6 sm:h-6 text-slate-500" />,
+      label: "2nd",
+      labelClass: "bg-slate-400 text-white",
+    },
+    3: {
+      height: "h-20 sm:h-24",
+      bg: "bg-gradient-to-b from-orange-200 to-orange-100",
+      border: "border-orange-300",
+      icon: <Award className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600" />,
+      label: "3rd",
+      labelClass: "bg-orange-400 text-orange-50",
+    },
+  }[place];
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center mb-2 text-center">
+        {config.icon}
+        <Avatar name={person.name} size="lg" />
+        <div className="font-bold text-sm sm:text-base mt-2 truncate max-w-full">
+          {person.name}
+        </div>
+        <div className="text-xs sm:text-sm text-muted-foreground tabular-nums">
+          ₹{person.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+        </div>
+        <div className="text-[10px] sm:text-xs text-muted-foreground">
+          {person.expenseCount} expense{person.expenseCount !== 1 ? "s" : ""}
+        </div>
+      </div>
+      <div
+        className={cn(
+          "w-full rounded-t-lg border-t-2 border-x flex items-center justify-center",
+          config.height,
+          config.bg,
+          config.border
+        )}
+      >
+        <span
+          className={cn(
+            "text-xs font-bold px-2.5 py-0.5 rounded-full",
+            config.labelClass
+          )}
+        >
+          {config.label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PodiumPlaceholder({ place }: { place: 2 | 3 }) {
+  const height = place === 2 ? "h-24 sm:h-32" : "h-20 sm:h-24";
+  return (
+    <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center mb-2 text-center opacity-40">
+        <div className="w-14 h-14 rounded-full border-2 border-dashed border-muted-foreground/30" />
+        <div className="text-xs text-muted-foreground mt-2">No one yet</div>
+      </div>
+      <div
+        className={cn(
+          "w-full rounded-t-lg border-t-2 border-x border-dashed border-muted-foreground/20 bg-secondary/30",
+          height
+        )}
+      />
+    </div>
+  );
+}
+
+const BADGE_TONES: Record<
+  string,
+  { ring: string; bg: string; iconBg: string; iconText: string }
+> = {
+  primary: {
+    ring: "hover:border-primary/40",
+    bg: "from-primary/8 to-transparent",
+    iconBg: "bg-primary/10",
+    iconText: "text-primary",
+  },
+  accent: {
+    ring: "hover:border-accent/40",
+    bg: "from-accent/8 to-transparent",
+    iconBg: "bg-accent/10",
+    iconText: "text-accent",
+  },
+  amber: {
+    ring: "hover:border-amber-400",
+    bg: "from-amber-200/30 to-transparent",
+    iconBg: "bg-amber-100",
+    iconText: "text-amber-700",
+  },
+  rose: {
+    ring: "hover:border-rose-300",
+    bg: "from-rose-200/30 to-transparent",
+    iconBg: "bg-rose-100",
+    iconText: "text-rose-600",
+  },
+  slate: {
+    ring: "hover:border-slate-300",
+    bg: "from-slate-200/40 to-transparent",
+    iconBg: "bg-slate-100",
+    iconText: "text-slate-700",
+  },
+  orange: {
+    ring: "hover:border-orange-300",
+    bg: "from-orange-200/30 to-transparent",
+    iconBg: "bg-orange-100",
+    iconText: "text-orange-700",
+  },
+};
+
+function BadgeCard({
+  icon: Icon,
+  emoji,
+  title,
+  subtitle,
+  name,
+  tone,
+}: {
+  icon: typeof Trophy;
+  emoji: string;
+  title: string;
+  subtitle: string;
+  name: string;
+  tone: keyof typeof BADGE_TONES;
+}) {
+  const t = BADGE_TONES[tone];
+  return (
+    <Card
+      className={cn(
+        "transition-all hover:shadow-md hover:-translate-y-0.5 overflow-hidden border-2 border-transparent bg-gradient-to-br",
+        t.ring,
+        t.bg
+      )}
+    >
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              "w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0",
+              t.iconBg
+            )}
+            aria-hidden
+          >
+            <span>{emoji}</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {title}
+              </p>
+              <Icon className={cn("w-3 h-3", t.iconText)} />
+            </div>
+            <p className="text-base sm:text-lg font-bold truncate">{name}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

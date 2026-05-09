@@ -15,6 +15,8 @@ import {
   ShieldCheck,
   Mail,
   Loader2,
+  Pizza,
+  Star,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,29 +30,50 @@ interface FeatureCardProps {
   title: string;
   description: string;
   badge?: string;
+  tone?: "primary" | "accent" | "amber" | "rose" | "sky" | "violet";
 }
+
+const FEATURE_TONES = {
+  primary: { bg: "bg-primary/10", icon: "text-primary", hover: "group-hover:bg-primary group-hover:text-primary-foreground" },
+  accent: { bg: "bg-accent/10", icon: "text-accent", hover: "group-hover:bg-accent group-hover:text-accent-foreground" },
+  amber: { bg: "bg-amber-100", icon: "text-amber-700", hover: "group-hover:bg-amber-500 group-hover:text-white" },
+  rose: { bg: "bg-rose-100", icon: "text-rose-600", hover: "group-hover:bg-rose-500 group-hover:text-white" },
+  sky: { bg: "bg-sky-100", icon: "text-sky-700", hover: "group-hover:bg-sky-500 group-hover:text-white" },
+  violet: { bg: "bg-violet-100", icon: "text-violet-700", hover: "group-hover:bg-violet-500 group-hover:text-white" },
+};
 
 const FeatureCard = ({
   icon: Icon,
   title,
   description,
   badge,
-}: FeatureCardProps) => (
-  <Card className="p-6 hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 group">
-    <div className="w-11 h-11 rounded-lg bg-primary/10 text-primary flex items-center justify-center mb-4 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-      <Icon size={22} />
-    </div>
-    <div className="flex items-center gap-2 mb-2">
-      <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-      {badge && (
-        <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 font-medium">
-          {badge}
-        </span>
-      )}
-    </div>
-    <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
-  </Card>
-);
+  tone = "primary",
+}: FeatureCardProps) => {
+  const t = FEATURE_TONES[tone];
+  return (
+    <Card className="p-6 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 group bg-card border-border">
+      <div
+        className={cn(
+          "w-12 h-12 rounded-xl flex items-center justify-center mb-4 transition-colors",
+          t.bg,
+          t.icon,
+          t.hover
+        )}
+      >
+        <Icon size={22} />
+      </div>
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+        {badge && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 font-medium">
+            {badge}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+    </Card>
+  );
+};
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -448,10 +471,25 @@ const Auth = () => {
       </nav>
 
       {/* Hero */}
-      <section className="relative pt-32 pb-16 sm:pt-40 sm:pb-24 overflow-hidden">
+      <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 overflow-hidden">
         {/* Soft warm decorative blobs */}
-        <div className="absolute top-[-10%] left-[10%] w-[400px] h-[400px] bg-primary/10 blur-[100px] rounded-full pointer-events-none" />
-        <div className="absolute top-[20%] right-[5%] w-[350px] h-[350px] bg-accent/10 blur-[90px] rounded-full pointer-events-none" />
+        <div className="absolute top-[-15%] left-[5%] w-[420px] h-[420px] bg-primary/15 blur-[110px] rounded-full pointer-events-none" />
+        <div className="absolute top-[25%] right-[0%] w-[360px] h-[360px] bg-accent/12 blur-[100px] rounded-full pointer-events-none" />
+        <div className="absolute bottom-[-10%] left-[40%] w-[300px] h-[300px] bg-amber-300/15 blur-[90px] rounded-full pointer-events-none" />
+
+        {/* Subtle dotted grid */}
+        <div
+          className="absolute inset-0 opacity-[0.4] pointer-events-none"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle, hsl(35 15% 80%) 1px, transparent 1px)",
+            backgroundSize: "28px 28px",
+            maskImage:
+              "radial-gradient(ellipse at center, black 30%, transparent 75%)",
+            WebkitMaskImage:
+              "radial-gradient(ellipse at center, black 30%, transparent 75%)",
+          }}
+        />
 
         <div className="container mx-auto px-4 sm:px-6 relative z-10">
           <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
@@ -463,13 +501,30 @@ const Auth = () => {
                 <span className="text-muted-foreground">Join 2,000+ users</span>
               </div>
 
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] mb-6 tracking-tight">
-                Splitting bills <br className="hidden lg:block" />
-                made <span className="gradient-text">effortless.</span>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.05] mb-6 tracking-tight">
+                Splitting bills{" "}
+                <span className="relative inline-block">
+                  <span className="gradient-text">made&nbsp;easy.</span>
+                  <svg
+                    className="absolute -bottom-2 left-0 w-full"
+                    viewBox="0 0 200 8"
+                    preserveAspectRatio="none"
+                    aria-hidden
+                  >
+                    <path
+                      d="M2 5 Q 50 1, 100 4 T 198 4"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      fill="none"
+                      opacity="0.6"
+                    />
+                  </svg>
+                </span>
               </h1>
 
               <p className="text-base sm:text-lg text-muted-foreground mb-8 max-w-xl mx-auto lg:mx-0 leading-relaxed">
-                Stop using spreadsheets. ExpenseWaale organizes your shared costs,
+                Stop using spreadsheets. ExpenseWaale organizes shared costs,
                 settles debts instantly, and keeps friendships drama-free.
               </p>
 
@@ -477,7 +532,7 @@ const Auth = () => {
                 <Button
                   onClick={() => openAuth("signup")}
                   size="lg"
-                  className="text-base px-7"
+                  className="text-base px-7 shadow-md shadow-primary/20"
                 >
                   Start splitting free
                   <ArrowRight size={18} className="ml-1" />
@@ -492,35 +547,97 @@ const Auth = () => {
                   }
                   className="text-base px-7"
                 >
-                  View features
+                  See how it works
                 </Button>
+              </div>
+
+              {/* Social proof: avatar stack + rating */}
+              <div className="mt-8 flex items-center justify-center lg:justify-start gap-4 flex-wrap">
+                <div className="flex -space-x-2">
+                  {["A", "R", "P", "S", "M"].map((c, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        "w-9 h-9 rounded-full border-2 border-background flex items-center justify-center text-xs font-bold",
+                        ["bg-rose-200 text-rose-800",
+                          "bg-amber-200 text-amber-900",
+                          "bg-emerald-200 text-emerald-800",
+                          "bg-sky-200 text-sky-800",
+                          "bg-violet-200 text-violet-800"][i]
+                      )}
+                    >
+                      {c}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-left">
+                  <div className="flex items-center gap-1">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <Star key={i} size={14} className="fill-amber-400 text-amber-400" />
+                    ))}
+                    <span className="text-xs font-semibold ml-1">4.9</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Loved by 2,000+ flatmates
+                  </div>
+                </div>
               </div>
 
               <div className="mt-10 grid grid-cols-3 gap-4 sm:gap-8 max-w-md mx-auto lg:mx-0 border-t border-border pt-6">
                 <div>
-                  <div className="text-xl sm:text-2xl font-bold text-foreground">
+                  <div className="text-xl sm:text-2xl font-bold gradient-text">
                     ₹10L+
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Tracked
-                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">Tracked</div>
                 </div>
                 <div>
-                  <div className="text-xl sm:text-2xl font-bold text-foreground">
-                    0%
+                  <div className="text-xl sm:text-2xl font-bold gradient-text">
+                    0₹
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">Fees</div>
+                  <div className="text-xs text-muted-foreground mt-1">In fees</div>
                 </div>
                 <div>
-                  <div className="text-xl sm:text-2xl font-bold text-foreground">
-                    4.9/5
+                  <div className="text-xl sm:text-2xl font-bold gradient-text">
+                    100%
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">Rating</div>
+                  <div className="text-xs text-muted-foreground mt-1">Free</div>
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 w-full max-w-md lg:max-w-lg">
+            <div className="flex-1 w-full max-w-md lg:max-w-lg relative">
+              {/* Floating decorative cards */}
+              <div className="hidden sm:block absolute -top-6 -left-4 z-20 animate-in fade-in slide-in-from-left-4 duration-700">
+                <div className="bg-card border border-border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-accent/15 text-accent flex items-center justify-center">
+                    <Check className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">
+                      Settled
+                    </div>
+                    <div className="text-sm font-bold">You paid ₹450</div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="hidden sm:block absolute -bottom-4 -right-2 z-20 animate-in fade-in slide-in-from-right-4 duration-700"
+                style={{ animationDelay: "200ms" }}
+              >
+                <div className="bg-card border border-border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center">
+                    <Pizza className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">
+                      New expense
+                    </div>
+                    <div className="text-sm font-bold">Pizza Night ₹1,200</div>
+                  </div>
+                </div>
+              </div>
+
               <MockScreen />
             </div>
           </div>
@@ -549,32 +666,38 @@ const Auth = () => {
               title="Split Spaces"
               description="Create separate contexts for your apartment, office team, or vacation. Keeps your finances organized."
               badge="Core"
+              tone="primary"
             />
             <FeatureCard
               icon={Receipt}
               title="Smart Expenses"
               description="Add expenses with custom categories. Split by percentage, shares, or equally. We handle the math."
+              tone="amber"
             />
             <FeatureCard
               icon={Check}
               title="Auto Settlements"
               description="Our algorithm calculates the minimum number of transactions needed to settle everyone up."
+              tone="accent"
             />
             <FeatureCard
               icon={TrendingUp}
               title="Deep Analytics"
               description="Visual spending trends, category breakdowns, and fairness scores to see who's carrying the team."
               badge="Pro"
+              tone="sky"
             />
             <FeatureCard
               icon={Trophy}
               title="Fun Leaderboards"
               description="Gamify spending with badges like Milk Bhai, Fuel King, or Silent Assassin. Make finance fun."
+              tone="rose"
             />
             <FeatureCard
               icon={Mail}
               title="PDF & Share"
               description="Export detailed PDF reports or generate a public link to share the settlement summary instantly."
+              tone="violet"
             />
           </div>
         </div>
@@ -629,18 +752,42 @@ const Auth = () => {
       {/* CTA */}
       <section className="pb-20">
         <div className="container mx-auto px-4 sm:px-6">
-          <Card className="p-8 sm:p-12 text-center bg-gradient-to-br from-primary/10 via-card to-accent/10 border-primary/20">
-            <h2 className="text-2xl sm:text-4xl font-bold mb-4 tracking-tight">
-              Ready to stop arguing about money?
-            </h2>
-            <p className="text-base sm:text-lg text-muted-foreground mb-7 max-w-2xl mx-auto">
-              Join thousands of flatmates who use ExpenseWaale to keep their
-              finances — and their friendships — clean.
-            </p>
-            <Button onClick={() => openAuth("signup")} size="lg" className="px-8">
-              Create free account
-              <ArrowRight size={18} className="ml-1" />
-            </Button>
+          <Card className="relative p-8 sm:p-14 text-center bg-gradient-to-br from-primary/12 via-card to-accent/12 border-primary/20 overflow-hidden">
+            {/* Decorative blur blobs */}
+            <div className="absolute top-0 right-0 w-72 h-72 bg-primary/15 blur-[80px] rounded-full pointer-events-none" />
+            <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/15 blur-[80px] rounded-full pointer-events-none" />
+
+            <div className="relative z-10">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-background/80 backdrop-blur border border-border text-xs font-semibold mb-5">
+                <Sparkles size={12} className="text-primary" />
+                <span>Free forever — no credit card required</span>
+              </div>
+              <h2 className="text-3xl sm:text-5xl font-bold mb-4 tracking-tight max-w-3xl mx-auto leading-tight">
+                Ready to stop arguing about money?
+              </h2>
+              <p className="text-base sm:text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
+                Join thousands of flatmates who use ExpenseWaale to keep their
+                finances — and their friendships — clean.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
+                <Button
+                  onClick={() => openAuth("signup")}
+                  size="lg"
+                  className="px-8 shadow-lg shadow-primary/20"
+                >
+                  Create free account
+                  <ArrowRight size={18} className="ml-1" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  onClick={() => openAuth("signin")}
+                  className="px-6"
+                >
+                  I already have an account
+                </Button>
+              </div>
+            </div>
           </Card>
         </div>
       </section>

@@ -8,7 +8,20 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { CalendarIcon, Loader2, Download, TrendingUp, Filter, X } from "lucide-react";
+import {
+  CalendarIcon,
+  Loader2,
+  Download,
+  TrendingUp,
+  Filter,
+  X,
+  Wallet,
+  CalendarDays,
+  Users as UsersIcon,
+  Scale,
+  Flame,
+  Target,
+} from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -42,7 +55,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { PeopleFilters } from "@/components/PeopleFilters";
-import { Checkbox } from "@/components/ui/checkbox";
+import { CategoryFilterSection } from "@/components/CategoryFilterChips";
 import { Badge } from "@/components/ui/badge";
 import { useReportFilters } from "@/hooks/useReportFilters";
 
@@ -472,11 +485,14 @@ export default function Analytics() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Analytics</h1>
+          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1">Analytics</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">
+            Spending patterns, trends, and fairness — at a glance.
+          </p>
           {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               SplitSpace: {selectedSplitSpace.name}
             </p>
           )}
@@ -484,6 +500,8 @@ export default function Analytics() {
         <Button
           onClick={generateAnalyticsSummaryPDF}
           disabled={pdfLoading !== null}
+          variant="outline"
+          className="self-start sm:self-auto"
         >
           {pdfLoading ? (
             <>
@@ -533,140 +551,33 @@ export default function Analytics() {
                     )}
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                      <Filter className="w-5 h-5" />
-                      Advanced Filters
+                      <Filter className="w-5 h-5 text-primary" />
+                      Filters
                     </DialogTitle>
                     <DialogDescription>
-                      Filter expenses by people and categories to get precise
-                      reports
+                      Narrow down what you're analyzing.
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="grid gap-6 md:grid-cols-2 mt-4">
+
+                  <div className="space-y-6 mt-2">
                     <PeopleFilters
                       flatmates={flatmates}
                       onFiltersChange={setPeopleFilters}
                     />
 
-                    {/* Category Filters */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-lg">
-                          Category Filters
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">
-                            Include Categories (Show only these)
-                          </Label>
-                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                            {categories.length === 0 ? (
-                              <p className="text-sm text-muted-foreground text-center py-4">
-                                No categories available
-                              </p>
-                            ) : (
-                              categories.map((category) => (
-                                <div
-                                  key={category.id}
-                                  className="flex items-center space-x-2"
-                                >
-                                  <Checkbox
-                                    id={`analytics-include-${category.id}`}
-                                    checked={categoryFilters.include.includes(
-                                      category.id
-                                    )}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          include: [
-                                            ...categoryFilters.include,
-                                            category.id,
-                                          ],
-                                        });
-                                      } else {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          include:
-                                            categoryFilters.include.filter(
-                                              (id) => id !== category.id
-                                            ),
-                                        });
-                                      }
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`analytics-include-${category.id}`}
-                                    className="text-sm font-normal cursor-pointer flex-1"
-                                  >
-                                    {category.name}
-                                  </Label>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
+                    <Separator />
 
-                        <Separator />
-
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">
-                            Exclude Categories (Hide these)
-                          </Label>
-                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                            {categories.length === 0 ? (
-                              <p className="text-sm text-muted-foreground text-center py-4">
-                                No categories available
-                              </p>
-                            ) : (
-                              categories.map((category) => (
-                                <div
-                                  key={category.id}
-                                  className="flex items-center space-x-2"
-                                >
-                                  <Checkbox
-                                    id={`analytics-exclude-${category.id}`}
-                                    checked={categoryFilters.exclude.includes(
-                                      category.id
-                                    )}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          exclude: [
-                                            ...categoryFilters.exclude,
-                                            category.id,
-                                          ],
-                                        });
-                                      } else {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          exclude:
-                                            categoryFilters.exclude.filter(
-                                              (id) => id !== category.id
-                                            ),
-                                        });
-                                      }
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`analytics-exclude-${category.id}`}
-                                    className="text-sm font-normal cursor-pointer flex-1"
-                                  >
-                                    {category.name}
-                                  </Label>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <CategoryFilterSection
+                      categories={categories}
+                      categoryFilters={categoryFilters}
+                      setCategoryFilters={setCategoryFilters}
+                    />
                   </div>
-                  <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-6 pt-4 border-t">
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -674,10 +585,10 @@ export default function Analytics() {
                       }}
                     >
                       <X className="w-4 h-4 mr-2" />
-                      Reset All Filters
+                      Reset all
                     </Button>
                     <Button onClick={() => setFiltersModalOpen(false)}>
-                      Apply Filters
+                      Apply
                     </Button>
                   </div>
                 </DialogContent>
@@ -725,92 +636,59 @@ export default function Analytics() {
       </Card>
 
       {/* Key Metrics */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Total Expenses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${totalExpenses.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground mt-1">{expenses.length} expenses</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Avg per Day</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${avgPerDay.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Over {daysDiff} days</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Avg per Person</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${avgPerPerson.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground mt-1">{flatmates.length} people</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Fairness Score</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{fairnessScore.toFixed(1)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Out of 100</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          icon={Wallet}
+          label="Total Spent"
+          value={`₹${totalExpenses.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          sub={`${expenses.length} expense${expenses.length === 1 ? "" : "s"}`}
+          tint="primary"
+        />
+        <StatCard
+          icon={CalendarDays}
+          label="Per Day"
+          value={`₹${avgPerDay.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          sub={`Over ${daysDiff} day${daysDiff === 1 ? "" : "s"}`}
+          tint="amber"
+        />
+        <StatCard
+          icon={UsersIcon}
+          label="Per Person"
+          value={`₹${avgPerPerson.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          sub={`${flatmates.length} ${flatmates.length === 1 ? "person" : "people"}`}
+          tint="accent"
+        />
+        <FairnessCard score={fairnessScore} />
       </div>
 
-      {/* Category Breakdown */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Category Breakdown</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {categoryTotals
-              .filter((cat) => cat.total > 0)
-              .sort((a, b) => b.total - a.total)
-              .map((cat) => (
-                <div key={cat.id} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium">{cat.name}</span>
-                    <span className="font-bold">${cat.total.toFixed(2)}</span>
-                  </div>
-                  <div className="w-full bg-secondary rounded-full h-2">
-                    <div
-                      className="bg-primary h-2 rounded-full"
-                      style={{ width: `${Math.min(cat.percentage, 100)}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{cat.percentage.toFixed(1)}% of total</span>
-                    <span>{cat.count} expense{cat.count !== 1 ? "s" : ""}</span>
-                  </div>
-                </div>
-              ))}
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Expense Trend Graph */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Expense Trends</CardTitle>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                Expense Trends
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Spending over time
+              </p>
+            </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="period" className="text-sm">Period:</Label>
-              <Select value={graphPeriod} onValueChange={(value: "day" | "week" | "month") => setGraphPeriod(value)}>
-                <SelectTrigger id="period" className="w-32">
+              <Label htmlFor="period" className="text-xs text-muted-foreground">
+                View:
+              </Label>
+              <Select
+                value={graphPeriod}
+                onValueChange={(value: "day" | "week" | "month") => setGraphPeriod(value)}
+              >
+                <SelectTrigger id="period" className="w-28 h-8">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="day">Day</SelectItem>
-                  <SelectItem value="week">Week</SelectItem>
-                  <SelectItem value="month">Month</SelectItem>
+                  <SelectItem value="day">Daily</SelectItem>
+                  <SelectItem value="week">Weekly</SelectItem>
+                  <SelectItem value="month">Monthly</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -827,23 +705,89 @@ export default function Analytics() {
         </CardContent>
       </Card>
 
+      {/* Category Breakdown */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Target className="w-5 h-5 text-primary" />
+            Category Breakdown
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Where the money's going
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {categoryTotals
+              .filter((cat) => cat.total > 0)
+              .sort((a, b) => b.total - a.total)
+              .map((cat, idx) => (
+                <CategoryBar
+                  key={cat.id}
+                  name={cat.name}
+                  total={cat.total}
+                  percentage={cat.percentage}
+                  count={cat.count}
+                  rank={idx}
+                />
+              ))}
+            {categoryTotals.filter((c) => c.total > 0).length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No category data for the selected range.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Top Days */}
       {topDays.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Top 5 Most Expensive Days</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Flame className="w-5 h-5 text-primary" />
+              Top 5 Most Expensive Days
+            </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              The days that drained the wallet
+            </p>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               {topDays.map((day, idx) => (
-                <div key={day.date} className="flex justify-between items-center p-2 bg-secondary/30 rounded">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-primary">#{idx + 1}</span>
-                    <span>{format(new Date(day.date), "MMM dd, yyyy")}</span>
+                <div
+                  key={day.date}
+                  className={cn(
+                    "flex items-center justify-between p-3 rounded-lg border transition-colors",
+                    idx === 0
+                      ? "bg-primary/5 border-primary/30"
+                      : "bg-secondary/40 border-border"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0",
+                        idx === 0
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-secondary text-foreground"
+                      )}
+                    >
+                      {idx + 1}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm sm:text-base">
+                        {format(new Date(day.date), "EEE, MMM d, yyyy")}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {day.count} expense{day.count !== 1 ? "s" : ""}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-bold">${day.total.toFixed(2)}</div>
-                    <div className="text-xs text-muted-foreground">{day.count} expense{day.count !== 1 ? "s" : ""}</div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-base sm:text-lg font-bold">
+                      ₹{day.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -851,6 +795,148 @@ export default function Analytics() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ---- Sub-components for visual stat cards ----
+
+const TINT_CLASSES: Record<string, string> = {
+  primary: "bg-primary/10 text-primary",
+  accent: "bg-accent/10 text-accent",
+  amber: "bg-amber-500/10 text-amber-700",
+};
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  tint = "primary",
+}: {
+  icon: typeof Wallet;
+  label: string;
+  value: string;
+  sub: string;
+  tint?: "primary" | "accent" | "amber";
+}) {
+  return (
+    <Card className="hover:shadow-md transition-shadow">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {label}
+            </p>
+            <p className="text-xl sm:text-2xl font-bold mt-2 truncate">{value}</p>
+            <p className="text-xs text-muted-foreground mt-1">{sub}</p>
+          </div>
+          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", TINT_CLASSES[tint])}>
+            <Icon className="w-4 h-4" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FairnessCard({ score }: { score: number }) {
+  const pct = Math.max(0, Math.min(100, score));
+  const tone =
+    pct >= 75
+      ? { ring: "stroke-accent", label: "Fair", labelClass: "text-accent" }
+      : pct >= 50
+      ? { ring: "stroke-amber-500", label: "Uneven", labelClass: "text-amber-700" }
+      : { ring: "stroke-destructive", label: "Skewed", labelClass: "text-destructive" };
+
+  const r = 26;
+  const c = 2 * Math.PI * r;
+  const offset = c - (pct / 100) * c;
+
+  return (
+    <Card className="hover:shadow-md transition-shadow">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-center gap-3">
+          <div className="relative w-16 h-16 flex-shrink-0">
+            <svg className="w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+              <circle cx="32" cy="32" r={r} className="stroke-secondary" strokeWidth="6" fill="none" />
+              <circle
+                cx="32"
+                cy="32"
+                r={r}
+                className={cn("transition-all", tone.ring)}
+                strokeWidth="6"
+                fill="none"
+                strokeDasharray={c}
+                strokeDashoffset={offset}
+                strokeLinecap="round"
+              />
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-sm font-bold">{pct.toFixed(0)}</span>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Fairness
+            </p>
+            <p className={cn("text-base font-bold mt-1", tone.labelClass)}>{tone.label}</p>
+            <p className="text-xs text-muted-foreground">Out of 100</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const CATEGORY_PALETTE = [
+  "bg-primary",
+  "bg-accent",
+  "bg-amber-500",
+  "bg-rose-500",
+  "bg-sky-600",
+  "bg-violet-500",
+  "bg-emerald-600",
+  "bg-orange-500",
+];
+
+function CategoryBar({
+  name,
+  total,
+  percentage,
+  count,
+  rank,
+}: {
+  name: string;
+  total: number;
+  percentage: number;
+  count: number;
+  rank: number;
+}) {
+  const barColor = CATEGORY_PALETTE[rank % CATEGORY_PALETTE.length];
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={cn("w-2 h-2 rounded-full flex-shrink-0", barColor)} />
+          <span className="font-medium text-sm truncate">{name}</span>
+        </div>
+        <span className="font-semibold text-sm tabular-nums">
+          ₹{total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+        </span>
+      </div>
+      <div className="w-full bg-secondary/80 rounded-full h-2 overflow-hidden">
+        <div
+          className={cn("h-2 rounded-full transition-all", barColor)}
+          style={{ width: `${Math.min(percentage, 100)}%` }}
+        />
+      </div>
+      <div className="flex justify-between text-xs text-muted-foreground">
+        <span>{percentage.toFixed(1)}%</span>
+        <span>
+          {count} expense{count !== 1 ? "s" : ""}
+        </span>
+      </div>
     </div>
   );
 }

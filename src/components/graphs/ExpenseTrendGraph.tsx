@@ -76,10 +76,16 @@ export const ExpenseTrendGraph = ({
     }));
   }, [expenses, period]);
 
+  // Warm theme colors (terracotta primary)
+  const PRIMARY = "#9F4F2D";
+  const PRIMARY_DARK = "#7F3F24";
+  const GRID = "#E1DCD5";
+  const AXIS = "#78716C";
+
   const chartConfig = {
     amount: {
       label: "Amount",
-      color: "#3b82f6", // Bright blue for better visibility
+      color: PRIMARY,
     },
   };
 
@@ -97,31 +103,30 @@ export const ExpenseTrendGraph = ({
         <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 60 }}>
           <defs>
             <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.5} />
-              <stop offset="50%" stopColor="#3b82f6" stopOpacity={0.2} />
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.05} />
+              <stop offset="5%" stopColor={PRIMARY} stopOpacity={0.45} />
+              <stop offset="50%" stopColor={PRIMARY} stopOpacity={0.18} />
+              <stop offset="95%" stopColor={PRIMARY} stopOpacity={0.04} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.3} />
+          <CartesianGrid strokeDasharray="3 3" stroke={GRID} opacity={0.7} />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 11, fill: "#6b7280" }}
+            tick={{ fontSize: 11, fill: AXIS }}
             angle={-45}
             textAnchor="end"
             height={80}
             interval="preserveStartEnd"
           />
           <YAxis
-            tick={{ fontSize: 11, fill: "#6b7280" }}
-            tickFormatter={(value) => `$${value >= 1000 ? (value / 1000).toFixed(1) + 'k' : value.toFixed(0)}`}
+            tick={{ fontSize: 11, fill: AXIS }}
+            tickFormatter={(value) => `₹${value >= 1000 ? (value / 1000).toFixed(1) + 'k' : value.toFixed(0)}`}
           />
           <ChartTooltip
             content={<ChartTooltipContent />}
-            formatter={(value: number) => [`$${value.toFixed(2)}`, "Amount"]}
+            formatter={(value: number) => [`₹${value.toFixed(2)}`, "Amount"]}
             labelFormatter={(label) => `Period: ${label}`}
-            cursor={{ stroke: "#3b82f6", strokeWidth: 2, strokeDasharray: "5 5" }}
+            cursor={{ stroke: PRIMARY, strokeWidth: 2, strokeDasharray: "5 5" }}
           />
-          {/* Area fill with gradient for visual appeal */}
           <Area
             type="monotone"
             dataKey="amount"
@@ -129,23 +134,22 @@ export const ExpenseTrendGraph = ({
             fill="url(#colorAmount)"
             fillOpacity={1}
           />
-          {/* Main line with smooth curve */}
           <Line
             type="monotone"
             dataKey="amount"
-            stroke="#3b82f6"
-            strokeWidth={3}
-            dot={{ 
-              fill: "#3b82f6", 
-              r: 5, 
-              strokeWidth: 3, 
-              stroke: "#ffffff" 
+            stroke={PRIMARY}
+            strokeWidth={2.5}
+            dot={{
+              fill: PRIMARY,
+              r: 4,
+              strokeWidth: 2,
+              stroke: "#ffffff",
             }}
-            activeDot={{ 
-              r: 7, 
-              strokeWidth: 3,
-              stroke: "#2563eb",
-              fill: "#3b82f6"
+            activeDot={{
+              r: 6,
+              strokeWidth: 2,
+              stroke: PRIMARY_DARK,
+              fill: PRIMARY,
             }}
           />
         </ComposedChart>

@@ -33,6 +33,7 @@ import autoTable from "jspdf-autotable";
 import EmailReportDialog from "@/components/EmailReportDialog";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 import { PeopleFilters } from "@/components/PeopleFilters";
+import { CategoryFilterSection } from "@/components/CategoryFilterChips";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -1327,140 +1328,34 @@ export default function Reports() {
                     )}
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                      <Filter className="w-5 h-5" />
-                      Advanced Filters
+                      <Filter className="w-5 h-5 text-primary" />
+                      Filters
                     </DialogTitle>
                     <DialogDescription>
-                      Filter expenses by people and categories to get precise
-                      reports
+                      Narrow down what you're looking at by people or category.
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="grid gap-6 md:grid-cols-2 mt-4">
+
+                  <div className="space-y-6 mt-2">
                     <PeopleFilters
                       flatmates={flatmates}
                       onFiltersChange={setPeopleFilters}
                     />
 
-                    {/* Category Filters */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-lg">
-                          Category Filters
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">
-                            Include Categories (Show only these)
-                          </Label>
-                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                            {categories.length === 0 ? (
-                              <p className="text-sm text-muted-foreground text-center py-4">
-                                No categories available
-                              </p>
-                            ) : (
-                              categories.map((category) => (
-                                <div
-                                  key={category.id}
-                                  className="flex items-center space-x-2"
-                                >
-                                  <Checkbox
-                                    id={`include-${category.id}`}
-                                    checked={categoryFilters.include.includes(
-                                      category.id
-                                    )}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          include: [
-                                            ...categoryFilters.include,
-                                            category.id,
-                                          ],
-                                        });
-                                      } else {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          include:
-                                            categoryFilters.include.filter(
-                                              (id) => id !== category.id
-                                            ),
-                                        });
-                                      }
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`include-${category.id}`}
-                                    className="text-sm font-normal cursor-pointer flex-1"
-                                  >
-                                    {category.name}
-                                  </Label>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
+                    <Separator />
 
-                        <Separator />
-
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">
-                            Exclude Categories (Hide these)
-                          </Label>
-                          <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                            {categories.length === 0 ? (
-                              <p className="text-sm text-muted-foreground text-center py-4">
-                                No categories available
-                              </p>
-                            ) : (
-                              categories.map((category) => (
-                                <div
-                                  key={category.id}
-                                  className="flex items-center space-x-2"
-                                >
-                                  <Checkbox
-                                    id={`exclude-cat-${category.id}`}
-                                    checked={categoryFilters.exclude.includes(
-                                      category.id
-                                    )}
-                                    onCheckedChange={(checked) => {
-                                      if (checked) {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          exclude: [
-                                            ...categoryFilters.exclude,
-                                            category.id,
-                                          ],
-                                        });
-                                      } else {
-                                        setCategoryFilters({
-                                          ...categoryFilters,
-                                          exclude:
-                                            categoryFilters.exclude.filter(
-                                              (id) => id !== category.id
-                                            ),
-                                        });
-                                      }
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`exclude-cat-${category.id}`}
-                                    className="text-sm font-normal cursor-pointer flex-1"
-                                  >
-                                    {category.name}
-                                  </Label>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    {/* Category filters as chip pills */}
+                    <CategoryFilterSection
+                      categories={categories}
+                      categoryFilters={categoryFilters}
+                      setCategoryFilters={setCategoryFilters}
+                    />
                   </div>
-                  <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+
+                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-6 pt-4 border-t">
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -1468,10 +1363,10 @@ export default function Reports() {
                       }}
                     >
                       <X className="w-4 h-4 mr-2" />
-                      Reset All Filters
+                      Reset all
                     </Button>
                     <Button onClick={() => setFiltersModalOpen(false)}>
-                      Apply Filters
+                      Apply
                     </Button>
                   </div>
                 </DialogContent>

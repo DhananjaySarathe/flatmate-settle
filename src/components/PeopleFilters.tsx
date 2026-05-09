@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { Filter, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Users, X, Check } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface Flatmate {
   id: string;
@@ -21,6 +19,36 @@ interface PeopleFiltersProps {
   }) => void;
 }
 
+type Section = "exactMatch" | "anyMatch" | "exclude";
+
+interface SectionConfig {
+  id: Section;
+  label: string;
+  hint: string;
+  selectedClass: string;
+}
+
+const SECTIONS: SectionConfig[] = [
+  {
+    id: "exactMatch",
+    label: "Must include all of",
+    hint: "Show only expenses where every selected person is in the split",
+    selectedClass: "bg-primary text-primary-foreground border-primary",
+  },
+  {
+    id: "anyMatch",
+    label: "Include any of",
+    hint: "Show expenses where at least one selected person is in the split",
+    selectedClass: "bg-accent text-accent-foreground border-accent",
+  },
+  {
+    id: "exclude",
+    label: "Hide expenses with",
+    hint: "Hide any expense that involves these people (paid or split)",
+    selectedClass: "bg-destructive text-destructive-foreground border-destructive",
+  },
+];
+
 export const PeopleFilters = ({
   flatmates,
   onFiltersChange,
@@ -28,262 +56,125 @@ export const PeopleFilters = ({
   const [exactMatch, setExactMatch] = useState<string[]>([]);
   const [anyMatch, setAnyMatch] = useState<string[]>([]);
   const [exclude, setExclude] = useState<string[]>([]);
-  const [paidBy, setPaidBy] = useState<string[]>([]);
+  const paidBy: string[] = [];
 
-  const handleExactMatchChange = (flatmateId: string, checked: boolean) => {
-    const newExactMatch = checked
-      ? [...exactMatch, flatmateId]
-      : exactMatch.filter((id) => id !== flatmateId);
-    setExactMatch(newExactMatch);
-    applyFilters({
-      exactMatch: newExactMatch,
-      anyMatch,
-      exclude,
+  const setters: Record<Section, React.Dispatch<React.SetStateAction<string[]>>> = {
+    exactMatch: setExactMatch,
+    anyMatch: setAnyMatch,
+    exclude: setExclude,
+  };
+  const values: Record<Section, string[]> = {
+    exactMatch,
+    anyMatch,
+    exclude,
+  };
+
+  const apply = (next: Partial<Record<Section, string[]>>) => {
+    onFiltersChange({
+      exactMatch: next.exactMatch ?? exactMatch,
+      anyMatch: next.anyMatch ?? anyMatch,
+      exclude: next.exclude ?? exclude,
       paidBy,
     });
   };
 
-  const handleAnyMatchChange = (flatmateId: string, checked: boolean) => {
-    const newAnyMatch = checked
-      ? [...anyMatch, flatmateId]
-      : anyMatch.filter((id) => id !== flatmateId);
-    setAnyMatch(newAnyMatch);
-    applyFilters({
-      exactMatch,
-      anyMatch: newAnyMatch,
-      exclude,
-      paidBy,
-    });
+  const toggle = (section: Section, flatmateId: string) => {
+    const current = values[section];
+    const nextList = current.includes(flatmateId)
+      ? current.filter((id) => id !== flatmateId)
+      : [...current, flatmateId];
+    setters[section](nextList);
+    apply({ [section]: nextList });
   };
 
-  const handleExcludeChange = (flatmateId: string, checked: boolean) => {
-    const newExclude = checked
-      ? [...exclude, flatmateId]
-      : exclude.filter((id) => id !== flatmateId);
-    setExclude(newExclude);
-    applyFilters({
-      exactMatch,
-      anyMatch,
-      exclude: newExclude,
-      paidBy,
-    });
+  const clearSection = (section: Section) => {
+    setters[section]([]);
+    apply({ [section]: [] });
   };
 
-  const handlePaidByChange = (flatmateId: string, checked: boolean) => {
-    const newPaidBy = checked
-      ? [...paidBy, flatmateId]
-      : paidBy.filter((id) => id !== flatmateId);
-    setPaidBy(newPaidBy);
-    applyFilters({
-      exactMatch,
-      anyMatch,
-      exclude,
-      paidBy: newPaidBy,
-    });
-  };
-
-  const applyFilters = (filters: {
-    exactMatch: string[];
-    anyMatch: string[];
-    exclude: string[];
-    paidBy: string;
-  }) => {
-    onFiltersChange(filters);
-  };
-
-  const resetFilters = () => {
+  const resetAll = () => {
     setExactMatch([]);
     setAnyMatch([]);
     setExclude([]);
-    setPaidBy([]);
-    applyFilters({
-      exactMatch: [],
-      anyMatch: [],
-      exclude: [],
-      paidBy: [],
-    });
+    onFiltersChange({ exactMatch: [], anyMatch: [], exclude: [], paidBy: [] });
   };
 
-  const hasActiveFilters =
-    exactMatch.length > 0 ||
-    anyMatch.length > 0 ||
-    exclude.length > 0 ||
-    paidBy.length > 0;
+  const hasActive = exactMatch.length + anyMatch.length + exclude.length > 0;
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Filter className="w-4 h-4" />
-            People Filters
-          </CardTitle>
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={resetFilters}
-              className="text-xs"
-            >
-              <X className="w-3 h-3 mr-1" />
-              Reset
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Exact Match Filter */}
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">
-            Exact Match (ALL selected people must be involved)
-          </Label>
-          <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
-            {flatmates.map((flatmate) => (
-              <div key={flatmate.id} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`exact-${flatmate.id}`}
-                  checked={exactMatch.includes(flatmate.id)}
-                  onCheckedChange={(checked) =>
-                    handleExactMatchChange(flatmate.id, checked as boolean)
-                  }
-                />
-                <Label
-                  htmlFor={`exact-${flatmate.id}`}
-                  className="text-sm font-normal cursor-pointer flex-1"
-                >
-                  {flatmate.name}
-                </Label>
-              </div>
-            ))}
-          </div>
-          {exactMatch.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {exactMatch.map((id) => {
-                const flatmate = flatmates.find((f) => f.id === id);
-                return (
-                  <Badge key={id} variant="secondary" className="text-xs">
-                    {flatmate?.name}
-                  </Badge>
-                );
-              })}
-            </div>
-          )}
-        </div>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <Label className="text-sm font-semibold flex items-center gap-2">
+          <Users className="w-4 h-4 text-primary" />
+          People
+        </Label>
+        {hasActive && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={resetAll}
+            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-3 h-3 mr-1" />
+            Clear people
+          </Button>
+        )}
+      </div>
 
-        {/* Any Match Filter */}
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">
-            Any Match (ANY selected people involved)
-          </Label>
-          <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
-            {flatmates.map((flatmate) => (
-              <div key={flatmate.id} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`any-${flatmate.id}`}
-                  checked={anyMatch.includes(flatmate.id)}
-                  onCheckedChange={(checked) =>
-                    handleAnyMatchChange(flatmate.id, checked as boolean)
-                  }
-                />
-                <Label
-                  htmlFor={`any-${flatmate.id}`}
-                  className="text-sm font-normal cursor-pointer flex-1"
-                >
-                  {flatmate.name}
-                </Label>
+      {flatmates.length === 0 ? (
+        <p className="text-sm text-muted-foreground bg-secondary/40 rounded-md p-4 text-center">
+          No flatmates added yet.
+        </p>
+      ) : (
+        SECTIONS.map((section) => {
+          const selected = values[section.id];
+          return (
+            <div key={section.id} className="space-y-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-foreground">
+                    {section.label}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {section.hint}
+                  </div>
+                </div>
+                {selected.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => clearSection(section.id)}
+                    className="text-[11px] text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-            ))}
-          </div>
-          {anyMatch.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {anyMatch.map((id) => {
-                const flatmate = flatmates.find((f) => f.id === id);
-                return (
-                  <Badge key={id} variant="outline" className="text-xs">
-                    {flatmate?.name}
-                  </Badge>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Exclude Filter */}
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">
-            Exclude (Hide expenses involving these people)
-          </Label>
-          <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
-            {flatmates.map((flatmate) => (
-              <div key={flatmate.id} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`exclude-${flatmate.id}`}
-                  checked={exclude.includes(flatmate.id)}
-                  onCheckedChange={(checked) =>
-                    handleExcludeChange(flatmate.id, checked as boolean)
-                  }
-                />
-                <Label
-                  htmlFor={`exclude-${flatmate.id}`}
-                  className="text-sm font-normal cursor-pointer flex-1"
-                >
-                  {flatmate.name}
-                </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {flatmates.map((f) => {
+                  const isSelected = selected.includes(f.id);
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => toggle(section.id, f.id)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+                        isSelected
+                          ? section.selectedClass
+                          : "bg-secondary/60 text-foreground border-border hover:bg-secondary"
+                      )}
+                      aria-pressed={isSelected}
+                    >
+                      {isSelected && <Check className="w-3 h-3" />}
+                      {f.name}
+                    </button>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-          {exclude.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {exclude.map((id) => {
-                const flatmate = flatmates.find((f) => f.id === id);
-                return (
-                  <Badge key={id} variant="destructive" className="text-xs">
-                    {flatmate?.name}
-                  </Badge>
-                );
-              })}
             </div>
-          )}
-        </div>
-
-        {/* Paid By Filter */}
-        {/* <div className="space-y-2">
-          <Label className="text-sm font-medium">
-            Paid By (Select multiple)
-          </Label>
-          <div className="space-y-2 max-h-32 overflow-y-auto p-2 bg-secondary/30 rounded-lg border border-border/50">
-            {flatmates.map((flatmate) => (
-              <div key={flatmate.id} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`paidby-${flatmate.id}`}
-                  checked={paidBy.includes(flatmate.id)}
-                  onCheckedChange={(checked) =>
-                    handlePaidByChange(flatmate.id, checked as boolean)
-                  }
-                />
-                <Label
-                  htmlFor={`paidby-${flatmate.id}`}
-                  className="text-sm font-normal cursor-pointer flex-1"
-                >
-                  {flatmate.name}
-                </Label>
-              </div>
-            ))}
-          </div>
-          {paidBy.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {paidBy.map((id) => {
-                const flatmate = flatmates.find((f) => f.id === id);
-                return (
-                  <Badge key={id} variant="outline" className="text-xs">
-                    {flatmate?.name}
-                  </Badge>
-                );
-              })}
-            </div>
-          )}
-        </div> */}
-      </CardContent>
-    </Card>
+          );
+        })
+      )}
+    </div>
   );
 };
