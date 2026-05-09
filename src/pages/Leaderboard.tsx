@@ -28,6 +28,7 @@ import {
   tableStyles,
   accentTableStyles,
   createPdfDoc,
+  pdfAmount,
 } from "@/lib/pdfStyle";
 import { format } from "date-fns";
 
@@ -205,7 +206,7 @@ export default function Leaderboard() {
       const topPayersData = topPayers.map((person, idx) => [
         idx === 0 ? "Gold" : idx === 1 ? "Silver" : "Bronze",
         person.name,
-        `₹${person.totalPaid.toFixed(2)}`,
+        pdfAmount(person.totalPaid),
         person.expenseCount.toString(),
       ]);
 
@@ -228,12 +229,12 @@ export default function Leaderboard() {
       const sectionY = drawSectionTitle(doc, "Fun Stats & Badges", finalY + 14);
 
       const funStatsData = [
-        ["Most Generous", mostGenerous?.name || "N/A", `₹${mostGenerous?.totalPaid.toFixed(2) || "0.00"}`],
-        ["Silent Assassin", silentAssassin?.name || "N/A", `₹${silentAssassin?.totalPaid.toFixed(2) || "0.00"}`],
-        ["Big Spender", bigSpender?.name || "N/A", `₹${bigSpender?.highestExpense.toFixed(2) || "0.00"}`],
-        ["Milk Bhai (Groceries)", milkBhai.name, `₹${milkBhai.total.toFixed(2)}`],
-        ["Fuel King", fuelKing.name, `₹${fuelKing.total.toFixed(2)}`],
-        ["Foodie", foodie.name, `₹${foodie.total.toFixed(2)}`],
+        ["Most Generous", mostGenerous?.name || "N/A", mostGenerous ? pdfAmount(mostGenerous.totalPaid) : "Rs. 0.00"],
+        ["Silent Assassin", silentAssassin?.name || "N/A", silentAssassin ? pdfAmount(silentAssassin.totalPaid) : "Rs. 0.00"],
+        ["Big Spender", bigSpender?.name || "N/A", bigSpender ? pdfAmount(bigSpender.highestExpense) : "Rs. 0.00"],
+        ["Milk Bhai (Groceries)", milkBhai.name, pdfAmount(milkBhai.total)],
+        ["Fuel King", fuelKing.name, pdfAmount(fuelKing.total)],
+        ["Foodie", foodie.name, pdfAmount(foodie.total)],
       ];
 
       autoTable(doc, {

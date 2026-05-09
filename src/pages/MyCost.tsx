@@ -13,6 +13,7 @@ import {
   drawBody,
   tableStyles,
   createPdfDoc,
+  pdfAmount,
 } from "@/lib/pdfStyle";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 import { Badge } from "@/components/ui/badge";
@@ -337,14 +338,14 @@ export default function MyCost() {
         subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
         meta: format(new Date(), "MMM d, yyyy"),
       });
-      y = drawBody(doc, `Total cost: ₹${totalCost.toFixed(2)}`, y, { muted: true });
+      y = drawBody(doc, `Total cost: ${pdfAmount(totalCost)}`, y, { muted: true });
       y += 4;
 
       y = drawSectionTitle(doc, "Cost per Person", y);
 
       const costData = personCosts.map((personCost) => [
         personCost.name,
-        `₹${personCost.totalCost.toFixed(2)}`,
+        pdfAmount(personCost.totalCost),
         `${personCost.expenseCount}`,
       ]);
 
@@ -374,11 +375,11 @@ export default function MyCost() {
 
       let cy = drawSectionTitle(doc, "Summary", summaryStartY);
       cy = drawBody(doc, `Total people: ${personCosts.length}`, cy + 4);
-      cy = drawBody(doc, `Total cost: ₹${totalCost.toFixed(2)}`, cy);
+      cy = drawBody(doc, `Total cost: ${pdfAmount(totalCost)}`, cy);
       cy = drawBody(
         doc,
-        `Average per person: ₹${
-          personCosts.length > 0 ? (totalCost / personCosts.length).toFixed(2) : "0.00"
+        `Average per person: ${
+          personCosts.length > 0 ? pdfAmount(totalCost / personCosts.length) : "Rs. 0.00"
         }`,
         cy
       );

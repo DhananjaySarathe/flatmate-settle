@@ -35,6 +35,7 @@ import {
   tableStyles,
   accentTableStyles,
   createPdfDoc,
+  pdfAmount,
 } from "@/lib/pdfStyle";
 import { ExpenseTrendGraph } from "@/components/graphs/ExpenseTrendGraph";
 import {
@@ -389,7 +390,7 @@ export default function Analytics() {
         .sort((a, b) => b.total - a.total)
         .map((cat) => [
           cat.name,
-          `₹${cat.total.toFixed(2)}`,
+          pdfAmount(cat.total),
           `${cat.percentage.toFixed(1)}%`,
           cat.count.toString(),
         ]);
@@ -411,14 +412,14 @@ export default function Analytics() {
       const finalY = (doc as any).lastAutoTable?.finalY || y;
 
       let cursorY = drawSectionTitle(doc, "Key Insights", finalY + 14);
-      cursorY = drawBody(doc, `Total expenses: ₹${totalExpenses.toFixed(2)}`, cursorY + 4);
+      cursorY = drawBody(doc, `Total expenses: ${pdfAmount(totalExpenses)}`, cursorY + 4);
       cursorY = drawBody(
         doc,
-        `Most expensive category: ${mostExpensiveCategory.name} (₹${mostExpensiveCategory.total.toFixed(2)})`,
+        `Most expensive category: ${mostExpensiveCategory.name} (${pdfAmount(mostExpensiveCategory.total)})`,
         cursorY
       );
-      cursorY = drawBody(doc, `Average per day: ₹${avgPerDay.toFixed(2)}`, cursorY);
-      cursorY = drawBody(doc, `Average per person: ₹${avgPerPerson.toFixed(2)}`, cursorY);
+      cursorY = drawBody(doc, `Average per day: ${pdfAmount(avgPerDay)}`, cursorY);
+      cursorY = drawBody(doc, `Average per person: ${pdfAmount(avgPerPerson)}`, cursorY);
       cursorY = drawBody(doc, `Fairness score: ${fairnessScore.toFixed(1)}/100`, cursorY);
 
       if (topDays.length > 0) {
@@ -427,7 +428,7 @@ export default function Analytics() {
         const topDaysData = topDays.map((day, idx) => [
           `${idx + 1}`,
           format(new Date(day.date), "MMM d, yyyy"),
-          `₹${day.total.toFixed(2)}`,
+          pdfAmount(day.total),
           day.count.toString(),
         ]);
 

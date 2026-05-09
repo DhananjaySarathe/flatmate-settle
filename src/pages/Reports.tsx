@@ -71,6 +71,7 @@ import {
   tableStyles,
   accentTableStyles,
   createPdfDoc,
+  pdfAmount,
 } from "@/lib/pdfStyle";
 
 interface Flatmate {
@@ -760,7 +761,7 @@ export default function Reports() {
 
       y = drawBody(doc, `Period: ${period}`, y, { muted: true });
       const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-      y = drawBody(doc, `Total: ₹${totalExpenses.toFixed(2)}  ·  ${expenses.length} expenses`, y, {
+      y = drawBody(doc, `Total: ${pdfAmount(totalExpenses)}  ·  ${expenses.length} expenses`, y, {
         muted: true,
       });
       y += 4;
@@ -777,8 +778,8 @@ export default function Reports() {
           expense.title,
           paidBy?.name || "Unknown",
           splitBetween,
-          `₹${splitAmount.toFixed(2)}`,
-          `₹${expense.amount.toFixed(2)}`,
+          pdfAmount(splitAmount),
+          pdfAmount(expense.amount),
         ];
       });
 
@@ -788,8 +789,9 @@ export default function Reports() {
           head: [["Date", "Description", "Paid By", "Split Between", "Per Person", "Total"]],
           body: tableData,
           columnStyles: {
-            4: { halign: "right" },
-            5: { halign: "right", fontStyle: "bold" },
+            0: { cellWidth: 18 },
+            4: { halign: "right", cellWidth: 22 },
+            5: { halign: "right", fontStyle: "bold", cellWidth: 24 },
           },
           didDrawPage: () => drawPdfFooter(doc),
         }),
@@ -800,11 +802,11 @@ export default function Reports() {
 
       drawSectionTitle(doc, "Summary", summaryY);
       drawBody(doc, `Total expenses: ${expenses.length}`, summaryY + 8);
-      drawBody(doc, `Total amount: ₹${totalExpenses.toFixed(2)}`, summaryY + 14);
+      drawBody(doc, `Total amount: ${pdfAmount(totalExpenses)}`, summaryY + 14);
       if (expenses.length > 0) {
         drawBody(
           doc,
-          `Average per expense: ₹${(totalExpenses / expenses.length).toFixed(2)}`,
+          `Average per expense: ${pdfAmount(totalExpenses / expenses.length)}`,
           summaryY + 20
         );
       }
@@ -843,18 +845,18 @@ export default function Reports() {
 
       y = drawBody(doc, `Period: ${period}`, y, { muted: true });
       const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-      y = drawBody(doc, `Total expenses: ₹${totalExpenses.toFixed(2)}`, y, { muted: true });
+      y = drawBody(doc, `Total expenses: ${pdfAmount(totalExpenses)}`, y, { muted: true });
       y += 4;
 
       y = drawSectionTitle(doc, "Balance Summary", y);
 
       const balanceData = balances.map((balance) => [
         balance.name,
-        `₹${balance.totalPaid.toFixed(2)}`,
-        `₹${balance.totalOwed.toFixed(2)}`,
+        pdfAmount(balance.totalPaid),
+        pdfAmount(balance.totalOwed),
         balance.balance >= 0
-          ? `+₹${balance.balance.toFixed(2)}`
-          : `-₹${Math.abs(balance.balance).toFixed(2)}`,
+          ? `+${pdfAmount(balance.balance)}`
+          : `-${pdfAmount(Math.abs(balance.balance))}`,
         balance.balance > 0.01
           ? "Is owed"
           : balance.balance < -0.01
@@ -886,7 +888,7 @@ export default function Reports() {
           `${index + 1}`,
           s.from,
           s.to,
-          `₹${s.amount.toFixed(2)}`,
+          pdfAmount(s.amount),
         ]);
 
         autoTable(doc, {
@@ -917,9 +919,9 @@ export default function Reports() {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
         doc.text(
-          `${settlements.length} transactions  ·  ₹${totalSettlements.toFixed(2)} total  ·  ₹${(
+          `${settlements.length} transactions  ·  ${pdfAmount(totalSettlements)} total  ·  ${pdfAmount(
             totalSettlements / settlements.length
-          ).toFixed(2)} avg`,
+          )} avg`,
           18,
           finalY2 + 24
         );
@@ -949,7 +951,7 @@ export default function Reports() {
           doc.setFontSize(10);
           doc.setTextColor(...PDF_COLORS.text);
           doc.text(
-            `${userData.name}  ·  Total paid ₹${userData.totalPaid.toFixed(2)}`,
+            `${userData.name}  ·  Total paid ${pdfAmount(userData.totalPaid)}`,
             16,
             cursorY + 6
           );
@@ -959,7 +961,7 @@ export default function Reports() {
             const userExpenseData = userData.expenses.map((e) => [
               format(new Date(e.date), "MMM d"),
               e.title,
-              `₹${e.amount.toFixed(2)}`,
+              pdfAmount(e.amount),
               `${e.expense_splits.length} people`,
             ]);
 

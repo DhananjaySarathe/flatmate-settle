@@ -146,3 +146,11 @@ export const accentTableStyles = (
 /** Convenience: build a fresh A4 jsPDF document. */
 export const createPdfDoc = (): jsPDF =>
   new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+/**
+ * Format a currency amount for PDF output. jsPDF's default Helvetica font
+ * does not include the rupee glyph (U+20B9), so it renders as a substitute
+ * character. Use "Rs." in PDFs to keep amounts readable.
+ */
+export const pdfAmount = (n: number, decimals = 2): string =>
+  `Rs. ${n.toFixed(decimals)}`;
