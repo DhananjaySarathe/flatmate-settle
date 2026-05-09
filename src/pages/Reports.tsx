@@ -19,6 +19,10 @@ import {
   ArrowUpDown,
   X,
   ChevronDown,
+  Bookmark,
+  Share2,
+  Trash2,
+  Link as LinkIcon,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -36,11 +40,14 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { useReportFilters } from "@/hooks/useReportFilters";
 import {
   Select,
@@ -49,6 +56,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  calculateBalances as calcBalances,
+  calculateSettlements as calcSettlements,
+  buildShareSnapshot,
+} from "@/lib/settlement";
 
 interface Flatmate {
   id: string;
@@ -127,6 +139,26 @@ export default function Reports() {
   >("date-desc");
   const [filtersModalOpen, setFiltersModalOpen] = useState(false);
 
+  // Mark Settlement feature
+  interface SavedSettlement {
+    id: string;
+    from_date: string;
+    to_date: string;
+    note: string | null;
+    created_at: string;
+  }
+  const [savedSettlements, setSavedSettlements] = useState<SavedSettlement[]>([]);
+  const [allSettlementsOpen, setAllSettlementsOpen] = useState(false);
+  const [markSettlementOpen, setMarkSettlementOpen] = useState(false);
+  const [settlementNote, setSettlementNote] = useState("");
+  const [savingSettlement, setSavingSettlement] = useState(false);
+
+  // Share feature
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+
   const fetchDataWithoutSplitSpace = async () => {
     setLoading(true);
     try {
@@ -148,8 +180,8 @@ export default function Reports() {
           )
         `
         )
-        .gte("date", dateRange.from.toISOString().split("T")[0])
-        .lte("date", dateRange.to.toISOString().split("T")[0])
+        .gte("date", format(dateRange.from, "yyyy-MM-dd"))
+        .lte("date", format(dateRange.to, "yyyy-MM-dd"))
         .order("date", { ascending: false });
 
       if (expensesError) throw expensesError;
@@ -230,8 +262,8 @@ export default function Reports() {
           )
         `
         )
-        .gte("date", dateRange.from.toISOString().split("T")[0])
-        .lte("date", dateRange.to.toISOString().split("T")[0])
+        .gte("date", format(dateRange.from, "yyyy-MM-dd"))
+        .lte("date", format(dateRange.to, "yyyy-MM-dd"))
         .order("date", { ascending: false });
 
       const expensesQueryWithCategory = expensesQuery.select(
@@ -266,8 +298,8 @@ export default function Reports() {
               )
             `
             )
-            .gte("date", dateRange.from.toISOString().split("T")[0])
-            .lte("date", dateRange.to.toISOString().split("T")[0])
+            .gte("date", format(dateRange.from, "yyyy-MM-dd"))
+            .lte("date", format(dateRange.to, "yyyy-MM-dd"))
             .order("date", { ascending: false });
           if (error) throw error;
           setAllExpenses(data || []);
@@ -436,89 +468,151 @@ export default function Reports() {
   }, [flatmates, expenses]);
 
   const calculateBalances = () => {
-    const balanceMap = new Map<string, Balance>();
-
-    // Initialize balances
-    flatmates.forEach((flatmate) => {
-      balanceMap.set(flatmate.id, {
-        id: flatmate.id,
-        name: flatmate.name,
-        totalPaid: 0,
-        totalOwed: 0,
-        balance: 0,
-      });
-    });
-
-    // Calculate total paid and owed
-    expenses.forEach((expense) => {
-      const paidByBalance = balanceMap.get(expense.paid_by);
-      if (paidByBalance) {
-        paidByBalance.totalPaid += expense.amount;
-      }
-
-      // Calculate split amount per person
-      const splitAmount = expense.amount / expense.expense_splits.length;
-
-      expense.expense_splits.forEach((split) => {
-        const owedBalance = balanceMap.get(split.flatmate_id);
-        if (owedBalance) {
-          owedBalance.totalOwed += splitAmount;
-        }
-      });
-    });
-
-    // Calculate net balance
-    balanceMap.forEach((balance) => {
-      balance.balance = balance.totalPaid - balance.totalOwed;
-    });
-
-    const calculatedBalances = Array.from(balanceMap.values());
+    const calculatedBalances = calcBalances(flatmates, expenses);
     setBalances(calculatedBalances);
-
-    // Calculate settlements
-    calculateSettlements(calculatedBalances);
+    setSettlements(calcSettlements(calculatedBalances));
   };
 
-  const calculateSettlements = (balances: Balance[]) => {
-    const settlements: Settlement[] = [];
-    const balancesCopy = [...balances].sort((a, b) => b.balance - a.balance);
-
-    let i = 0;
-    let j = balancesCopy.length - 1;
-
-    while (i < j) {
-      const debtor = balancesCopy[j];
-      const creditor = balancesCopy[i];
-
-      if (
-        Math.abs(debtor.balance) < 0.01 &&
-        Math.abs(creditor.balance) < 0.01
-      ) {
-        break;
-      }
-
-      const amount = Math.min(Math.abs(debtor.balance), creditor.balance);
-
-      if (amount > 0.01) {
-        settlements.push({
-          from: debtor.name,
-          to: creditor.name,
-          amount: amount,
-        });
-
-        debtor.balance += amount;
-        creditor.balance -= amount;
-      }
-
-      if (Math.abs(debtor.balance) < 0.01) {
-        j--;
-      }
-      if (creditor.balance < 0.01) {
-        i++;
-      }
+  // Load saved settlements when split space changes
+  useEffect(() => {
+    if (!selectedSplitSpace) {
+      setSavedSettlements([]);
+      return;
     }
+    const loadSavedSettlements = async () => {
+      const { data, error } = await supabase
+        .from("settlements")
+        .select("id, from_date, to_date, note, created_at")
+        .eq("split_space_id", selectedSplitSpace.id)
+        .order("created_at", { ascending: false });
+      if (error) {
+        if (error.code === "42P01") return; // table missing — migrations not run yet
+        console.error("Failed to load saved settlements:", error);
+        return;
+      }
+      setSavedSettlements(data || []);
+    };
+    loadSavedSettlements();
+  }, [selectedSplitSpace]);
 
-    setSettlements(settlements);
+  const refreshSavedSettlements = async () => {
+    if (!selectedSplitSpace) return;
+    const { data } = await supabase
+      .from("settlements")
+      .select("id, from_date, to_date, note, created_at")
+      .eq("split_space_id", selectedSplitSpace.id)
+      .order("created_at", { ascending: false });
+    setSavedSettlements(data || []);
+  };
+
+  const saveSettlement = async () => {
+    if (!selectedSplitSpace) {
+      toast.error("Select a split space first");
+      return;
+    }
+    setSavingSettlement(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in");
+
+      const { error } = await supabase.from("settlements").insert({
+        split_space_id: selectedSplitSpace.id,
+        from_date: format(dateRange.from, "yyyy-MM-dd"),
+        to_date: format(dateRange.to, "yyyy-MM-dd"),
+        note: settlementNote.trim() || null,
+        created_by: user.id,
+      });
+      if (error) throw error;
+      toast.success("Settlement marked");
+      setMarkSettlementOpen(false);
+      setSettlementNote("");
+      await refreshSavedSettlements();
+    } catch (err: any) {
+      toast.error(`Failed to mark settlement: ${err.message || "Unknown error"}`);
+    } finally {
+      setSavingSettlement(false);
+    }
+  };
+
+  const deleteSavedSettlement = async (id: string) => {
+    const { error } = await supabase.from("settlements").delete().eq("id", id);
+    if (error) {
+      toast.error(`Failed to delete: ${error.message}`);
+      return;
+    }
+    setSavedSettlements((prev) => prev.filter((s) => s.id !== id));
+    toast.success("Settlement removed");
+  };
+
+  const createShareLink = async () => {
+    if (!selectedSplitSpace) {
+      toast.error("Select a split space first");
+      return;
+    }
+    if (balances.length === 0) {
+      toast.error("Nothing to share — no expenses in range");
+      return;
+    }
+    setSharing(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in");
+
+      const snapshot = buildShareSnapshot({
+        splitSpaceName: selectedSplitSpace.name,
+        dateRange: {
+          from: format(dateRange.from, "yyyy-MM-dd"),
+          to: format(dateRange.to, "yyyy-MM-dd"),
+        },
+        balances,
+        settlements,
+        expenses,
+        flatmates,
+      });
+
+      const token = crypto.randomUUID().replace(/-/g, "");
+
+      const { error } = await supabase.from("shared_reports").insert({
+        token,
+        split_space_id: selectedSplitSpace.id,
+        split_space_name: selectedSplitSpace.name,
+        from_date: format(dateRange.from, "yyyy-MM-dd"),
+        to_date: format(dateRange.to, "yyyy-MM-dd"),
+        snapshot: snapshot as any,
+        created_by: user.id,
+      });
+      if (error) throw error;
+
+      const url = `${window.location.origin}/share/${token}`;
+      setShareUrl(url);
+      setShareCopied(false);
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareCopied(true);
+      } catch {
+        // clipboard may be blocked — user can copy manually from the dialog
+      }
+      toast.success("Public link created");
+    } catch (err: any) {
+      toast.error(`Failed to create share link: ${err.message || "Unknown error"}`);
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const copyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      toast.success("Link copied");
+    } catch {
+      toast.error("Couldn't copy — please copy manually");
+    }
   };
 
   const copySettlementSummary = async () => {
@@ -1220,7 +1314,7 @@ export default function Reports() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
           {selectedSplitSpace && (
@@ -1230,14 +1324,148 @@ export default function Reports() {
             </p>
           )}
         </div>
+        {selectedSplitSpace && savedSettlements.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/30 px-3 py-1.5">
+              <Bookmark className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <div className="text-xs sm:text-sm">
+                <span className="text-muted-foreground">Last settlement: </span>
+                <span className="font-medium">
+                  {format(new Date(savedSettlements[0].from_date), "MMM d")} –{" "}
+                  {format(new Date(savedSettlements[0].to_date), "MMM d, yyyy")}
+                </span>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAllSettlementsOpen(true)}
+            >
+              See all ({savedSettlements.length})
+            </Button>
+          </div>
+        )}
       </div>
+
+      {/* All settlements modal */}
+      <Dialog open={allSettlementsOpen} onOpenChange={setAllSettlementsOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bookmark className="w-5 h-5" />
+              Past Settlements
+            </DialogTitle>
+            <DialogDescription>
+              Date ranges you've marked as settled in this split space.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {savedSettlements.map((s) => (
+              <div
+                key={s.id}
+                className="flex items-start justify-between gap-3 rounded-md border border-border/50 p-3 bg-secondary/20"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">
+                    {format(new Date(s.from_date), "MMM d")} –{" "}
+                    {format(new Date(s.to_date), "MMM d, yyyy")}
+                  </div>
+                  {s.note && (
+                    <div className="text-xs text-muted-foreground mt-1 break-words">
+                      {s.note}
+                    </div>
+                  )}
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Marked {format(new Date(s.created_at), "MMM d, yyyy")}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive flex-shrink-0"
+                  onClick={() => deleteSavedSettlement(s.id)}
+                  aria-label="Delete settlement"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Date Range Selector */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <CardTitle>Select Date Range</CardTitle>
-            {flatmates.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {selectedSplitSpace && (
+                <Dialog
+                  open={markSettlementOpen}
+                  onOpenChange={(open) => {
+                    setMarkSettlementOpen(open);
+                    if (!open) setSettlementNote("");
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <Bookmark className="w-4 h-4" />
+                      Mark Settlement
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Mark Settlement</DialogTitle>
+                      <DialogDescription>
+                        Save this date range so you remember when the last
+                        settlement happened.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Range: </span>
+                        <span className="font-medium">
+                          {format(dateRange.from, "MMM d, yyyy")} –{" "}
+                          {format(dateRange.to, "MMM d, yyyy")}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="settlement-note">
+                          Note (optional)
+                        </Label>
+                        <Textarea
+                          id="settlement-note"
+                          placeholder="e.g. Settled in cash, Bob still pending"
+                          value={settlementNote}
+                          onChange={(e) => setSettlementNote(e.target.value)}
+                          rows={3}
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setMarkSettlementOpen(false)}
+                        disabled={savingSettlement}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={saveSettlement} disabled={savingSettlement}>
+                        {savingSettlement ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Saving
+                          </>
+                        ) : (
+                          "Save"
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+              {flatmates.length > 0 && (
               <Dialog
                 open={filtersModalOpen}
                 onOpenChange={setFiltersModalOpen}
@@ -1415,7 +1643,8 @@ export default function Reports() {
                   </div>
                 </DialogContent>
               </Dialog>
-            )}
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -1749,7 +1978,7 @@ export default function Reports() {
       )}
 
       {/* Reports */}
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {/* All Expenses Report */}
         <Card>
           <CardHeader>
@@ -1840,7 +2069,97 @@ export default function Reports() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Share public link */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+              <Share2 className="h-4 w-4 sm:h-5 sm:w-5" />
+              Share
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Generate a public web link with the current Summary, Settlements,
+              and Expenses. Snapshot — anyone with the link can view it.
+            </p>
+            <Button
+              onClick={createShareLink}
+              disabled={
+                sharing || balances.length === 0 || !selectedSplitSpace
+              }
+              className="w-full"
+              variant="secondary"
+            >
+              {sharing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating link
+                </>
+              ) : (
+                <>
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Create Public Link
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Share result dialog */}
+      <Dialog
+        open={shareDialogOpen || !!shareUrl}
+        onOpenChange={(open) => {
+          setShareDialogOpen(open);
+          if (!open) {
+            setShareUrl(null);
+            setShareCopied(false);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LinkIcon className="w-5 h-5" />
+              Public link ready
+            </DialogTitle>
+            <DialogDescription>
+              Anyone with this link can view the snapshot. New expenses won't
+              change what they see.
+            </DialogDescription>
+          </DialogHeader>
+          {shareUrl && (
+            <div className="flex items-center gap-2">
+              <Input value={shareUrl} readOnly onFocus={(e) => e.currentTarget.select()} />
+              <Button onClick={copyShareUrl} variant="outline" className="gap-2">
+                {shareCopied ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    Copy
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                setShareUrl(null);
+                setShareCopied(false);
+                setShareDialogOpen(false);
+              }}
+            >
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Balance Summary */}
       {balances.length > 0 && (

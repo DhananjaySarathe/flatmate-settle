@@ -181,8 +181,8 @@ export default function Analytics() {
           `
           )
           .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-          .gte("date", dateRange.from.toISOString().split("T")[0])
-          .lte("date", dateRange.to.toISOString().split("T")[0])
+          .gte("date", format(dateRange.from, "yyyy-MM-dd"))
+          .lte("date", format(dateRange.to, "yyyy-MM-dd"))
           .order("date", { ascending: false }),
         supabase
           .from("categories")

@@ -32,18 +32,18 @@ const Layout = ({ children }: LayoutProps) => {
 
   useEffect(() => {
     // Set up auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-      }
-    );
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+    });
 
     // Check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
-      
+
       if (!session && location.pathname !== "/auth") {
         navigate("/auth");
       }
@@ -113,7 +113,11 @@ const Layout = ({ children }: LayoutProps) => {
                         layoutId="activeTab"
                         className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
                         initial={false}
-                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 500,
+                          damping: 30,
+                        }}
                       />
                     )}
                   </Button>
@@ -133,7 +137,7 @@ const Layout = ({ children }: LayoutProps) => {
                 <LogOut className="w-5 h-5" />
               </Button>
             )}
-            
+
             {/* Mobile Menu Button */}
             <Button
               variant="ghost"
@@ -141,7 +145,11 @@ const Layout = ({ children }: LayoutProps) => {
               className="md:hidden"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {mobileMenuOpen ? (
+                <X className="w-5 h-5" />
+              ) : (
+                <Menu className="w-5 h-5" />
+              )}
             </Button>
           </div>
         </div>
@@ -188,9 +196,7 @@ const Layout = ({ children }: LayoutProps) => {
       </header>
 
       {/* Main Content */}
-      <main className="container px-4 py-8">
-        {children}
-      </main>
+      <main className="container px-4 py-8">{children}</main>
     </div>
   );
 };

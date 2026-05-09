@@ -11,6 +11,7 @@ import SplitSpaces from "./pages/SplitSpaces";
 import Analytics from "./pages/Analytics";
 import Leaderboard from "./pages/Leaderboard";
 import MyCost from "./pages/MyCost";
+import SharedReport from "./pages/SharedReport";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 import { SplitSpaceProvider } from "./contexts/SplitSpaceContext";
@@ -27,6 +28,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Navigate to="/auth" replace />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/share/:token" element={<SharedReport />} />
             <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
             <Route path="/expenses" element={<Layout><Expenses /></Layout>} />
             <Route path="/reports" element={<Layout><Reports /></Layout>} />

@@ -136,6 +136,72 @@ export type Database = {
         }
         Relationships: []
       }
+      settlements: {
+        Row: {
+          id: string
+          split_space_id: string
+          from_date: string
+          to_date: string
+          note: string | null
+          created_by: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          split_space_id: string
+          from_date: string
+          to_date: string
+          note?: string | null
+          created_by: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          split_space_id?: string
+          from_date?: string
+          to_date?: string
+          note?: string | null
+          created_by?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      shared_reports: {
+        Row: {
+          id: string
+          token: string
+          split_space_id: string
+          split_space_name: string
+          from_date: string
+          to_date: string
+          snapshot: Json
+          created_by: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          token: string
+          split_space_id: string
+          split_space_name: string
+          from_date: string
+          to_date: string
+          snapshot: Json
+          created_by: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          token?: string
+          split_space_id?: string
+          split_space_name?: string
+          from_date?: string
+          to_date?: string
+          snapshot?: Json
+          created_by?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
