@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import SharedMyCost from "@/components/SharedMyCost";
 import type { ReportSnapshot, SnapshotBalance } from "@/lib/settlement";
 
 interface SharedRow {
@@ -107,10 +108,11 @@ export default function SharedReport() {
         </div>
 
         <Tabs defaultValue="summary" className="w-full">
-          <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex">
+          <TabsList className="w-full sm:w-auto grid grid-cols-2 sm:inline-flex sm:grid-cols-none gap-y-1 sm:gap-y-0 h-auto sm:h-10">
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="settlements">Settlements</TabsTrigger>
             <TabsTrigger value="expenses">Expenses</TabsTrigger>
+            <TabsTrigger value="my-cost">My Cost</TabsTrigger>
           </TabsList>
 
           <TabsContent value="summary">
@@ -264,6 +266,10 @@ export default function SharedReport() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="my-cost">
+            <SharedMyCost snapshot={snapshot} />
           </TabsContent>
         </Tabs>
 
