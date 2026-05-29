@@ -1,10 +1,36 @@
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, Download, Filter, X, DollarSign } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Loader2,
+  Download,
+  Filter,
+  X,
+  DollarSign,
+  CalendarIcon,
+  Bookmark,
+} from "lucide-react";
 import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useMyCostFilters } from "@/hooks/useMyCostFilters";
 import autoTable from "jspdf-autotable";
 import {
   drawPdfHeader,
@@ -60,6 +86,14 @@ interface PersonCost {
   expenseCount: number;
 }
 
+interface SavedSettlement {
+  id: string;
+  from_date: string;
+  to_date: string;
+  note: string | null;
+  created_at: string;
+}
+
 export default function MyCost() {
   const {
     selectedSplitSpace,
@@ -81,6 +115,17 @@ export default function MyCost() {
   });
   const [filtersModalOpen, setFiltersModalOpen] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [savedSettlements, setSavedSettlements] = useState<SavedSettlement[]>(
+    []
+  );
+  const {
+    datePreset,
+    dateRange,
+    setDatePreset,
+    setDateRange,
+    applySettlementRange,
+    resetDateFilters,
+  } = useMyCostFilters();
 
   const fetchDataWithoutSplitSpace = async () => {
     setLoading(true);
@@ -244,9 +289,46 @@ export default function MyCost() {
     }
   }, [selectedSplitSpace, splitSpaces.length, contextLoading]);
 
-  // Apply category filters to expenses
+  useEffect(() => {
+    if (!selectedSplitSpace) {
+      setSavedSettlements([]);
+      return;
+    }
+    const loadSavedSettlements = async () => {
+      const { data, error } = await supabase
+        .from("settlements")
+        .select("id, from_date, to_date, note, created_at")
+        .eq("split_space_id", selectedSplitSpace.id)
+        .order("created_at", { ascending: false });
+      if (error) {
+        if (error.code === "42P01") return;
+        console.error("Failed to load saved settlements:", error);
+        return;
+      }
+      setSavedSettlements(data || []);
+    };
+    loadSavedSettlements();
+  }, [selectedSplitSpace]);
+
+  useEffect(() => {
+    if (!datePreset.startsWith("settlement:")) return;
+    const settlementId = datePreset.replace("settlement:", "");
+    if (!savedSettlements.some((s) => s.id === settlementId)) {
+      setDatePreset("all-time");
+    }
+  }, [savedSettlements, datePreset, setDatePreset]);
+
+  // Apply date and category filters to expenses
   useEffect(() => {
     let filteredExpenses = [...allExpenses];
+
+    if (datePreset !== "all-time") {
+      const fromStr = format(dateRange.from, "yyyy-MM-dd");
+      const toStr = format(dateRange.to, "yyyy-MM-dd");
+      filteredExpenses = filteredExpenses.filter(
+        (expense) => expense.date >= fromStr && expense.date <= toStr
+      );
+    }
 
     // Apply category filters
     if (categoryFilters.include.length > 0) {
@@ -268,7 +350,7 @@ export default function MyCost() {
     }
 
     setExpenses(filteredExpenses);
-  }, [allExpenses, categoryFilters]);
+  }, [allExpenses, categoryFilters, datePreset, dateRange]);
 
   // Calculate costs per person
   useEffect(() => {
@@ -327,6 +409,34 @@ export default function MyCost() {
     });
   };
 
+  const getPeriodLabel = () => {
+    if (datePreset === "all-time") {
+      return "All time";
+    }
+    return `${format(dateRange.from, "MMM d, yyyy")} – ${format(
+      dateRange.to,
+      "MMM d, yyyy"
+    )}`;
+  };
+
+  const handleDatePresetChange = (value: string) => {
+    if (value === "all-time" || value === "custom") {
+      setDatePreset(value);
+      return;
+    }
+    if (value.startsWith("settlement:")) {
+      const settlementId = value.replace("settlement:", "");
+      const settlement = savedSettlements.find((s) => s.id === settlementId);
+      if (settlement) {
+        applySettlementRange(
+          settlement.id,
+          new Date(settlement.from_date),
+          new Date(settlement.to_date)
+        );
+      }
+    }
+  };
+
   const generatePDF = async () => {
     setPdfLoading(true);
     try {
@@ -336,7 +446,7 @@ export default function MyCost() {
       let y = drawPdfHeader(doc, {
         title: "Cost Report",
         subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
-        meta: format(new Date(), "MMM d, yyyy"),
+        meta: `${getPeriodLabel()} · ${format(new Date(), "MMM d, yyyy")}`,
       });
       y = drawBody(doc, `Total cost: ${pdfAmount(totalCost)}`, y, { muted: true });
       y += 4;
@@ -620,6 +730,125 @@ export default function MyCost() {
         </div>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Select Date Range</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Period</Label>
+            <Select value={datePreset} onValueChange={handleDatePresetChange}>
+              <SelectTrigger className="w-full sm:w-[320px]">
+                <SelectValue placeholder="Select period" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all-time">All time</SelectItem>
+                <SelectItem value="custom">Custom range</SelectItem>
+                {savedSettlements.length > 0 && (
+                  <>
+                    <SelectSeparator />
+                    <SelectGroup>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <Bookmark className="w-3.5 h-3.5" />
+                        Past settlements
+                      </SelectLabel>
+                      {savedSettlements.map((settlement) => (
+                        <SelectItem
+                          key={settlement.id}
+                          value={`settlement:${settlement.id}`}
+                        >
+                          {format(new Date(settlement.from_date), "MMM d")} –{" "}
+                          {format(new Date(settlement.to_date), "MMM d, yyyy")}
+                          {settlement.note ? ` · ${settlement.note}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {datePreset === "all-time" ? (
+            <p className="text-sm text-muted-foreground">
+              Showing costs across all expenses in this split space.
+            </p>
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full sm:w-[240px] justify-start text-left font-normal",
+                      !dateRange.from && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">
+                      {format(dateRange.from, "PPP")}
+                    </span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={dateRange.from}
+                    onSelect={(date) =>
+                      date && setDateRange({ ...dateRange, from: date })
+                    }
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+
+              <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
+                to
+              </span>
+              <span className="text-muted-foreground text-center sm:hidden">
+                ↓
+              </span>
+
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full sm:w-[240px] justify-start text-left font-normal",
+                      !dateRange.to && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">
+                      {format(dateRange.to, "PPP")}
+                    </span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={dateRange.to}
+                    onSelect={(date) =>
+                      date && setDateRange({ ...dateRange, to: date })
+                    }
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={resetDateFilters}
+              >
+                Reset to all time
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Cost Summary Card */}
       <Card>
         <CardHeader>
@@ -627,6 +856,7 @@ export default function MyCost() {
             <DollarSign className="w-5 h-5" />
             Cost Per Person
           </CardTitle>
+          <p className="text-sm text-muted-foreground">{getPeriodLabel()}</p>
         </CardHeader>
         <CardContent>
           {personCosts.length === 0 ? (
