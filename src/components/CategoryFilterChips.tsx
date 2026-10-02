@@ -1,15 +1,9 @@
-import { Label } from "@/components/ui/label";
-import { Tag, Check } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Chip } from "@/components/common/Chip";
+import type { CategoryFilterValue } from "@/lib/expenseFilters";
 
 interface Category {
   id: string;
   name: string;
-}
-
-interface CategoryFilterValue {
-  include: string[];
-  exclude: string[];
 }
 
 interface Props {
@@ -18,126 +12,68 @@ interface Props {
   setCategoryFilters: (v: CategoryFilterValue) => void;
 }
 
-export const CategoryFilterSection = ({
-  categories,
-  categoryFilters,
-  setCategoryFilters,
-}: Props) => {
-  const toggle = (
-    section: "include" | "exclude",
-    categoryId: string
-  ) => {
+export const CategoryFilterSection = ({ categories, categoryFilters, setCategoryFilters }: Props) => {
+  if (categories.length === 0) {
+    return <p className="text-sm text-muted-foreground">No categories yet.</p>;
+  }
+
+  // A category can be shown-only or hidden, never both.
+  const toggle = (section: "include" | "exclude", categoryId: string) => {
     const current = categoryFilters[section];
     const next = current.includes(categoryId)
       ? current.filter((id) => id !== categoryId)
       : [...current, categoryId];
-
-    if (section === "include") {
-      // Selecting in 'include' should remove from 'exclude' (mutually exclusive)
-      setCategoryFilters({
-        include: next,
-        exclude: categoryFilters.exclude.filter((id) => id !== categoryId),
-      });
-    } else {
-      setCategoryFilters({
-        include: categoryFilters.include.filter((id) => id !== categoryId),
-        exclude: next,
-      });
-    }
+    const withoutId = (ids: string[]) => ids.filter((id) => id !== categoryId);
+    setCategoryFilters(
+      section === "include"
+        ? { include: next, exclude: withoutId(categoryFilters.exclude) }
+        : { include: withoutId(categoryFilters.include), exclude: next }
+    );
   };
 
-  const hasActive =
-    categoryFilters.include.length + categoryFilters.exclude.length > 0;
+  const sections = [
+    { id: "include" as const, label: "Only these categories", hint: "Hide everything else", tone: "primary" as const },
+    { id: "exclude" as const, label: "Hide these categories", hint: "Everything else stays", tone: "danger" as const },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <Label className="text-sm font-semibold flex items-center gap-2">
-          <Tag className="w-4 h-4 text-primary" />
-          Categories
-        </Label>
-        {hasActive && (
-          <button
-            type="button"
-            onClick={() => setCategoryFilters({ include: [], exclude: [] })}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Clear categories
-          </button>
-        )}
-      </div>
-
-      {categories.length === 0 ? (
-        <p className="text-sm text-muted-foreground bg-secondary/40 rounded-md p-4 text-center">
-          No categories available.
-        </p>
-      ) : (
-        <>
-          <div className="space-y-2">
-            <div>
-              <div className="text-xs font-semibold text-foreground">
-                Show only
+    <div className="space-y-5">
+      {sections.map((section) => {
+        const selected = categoryFilters[section.id];
+        return (
+          <fieldset key={section.id} className="space-y-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="min-w-0">
+                <legend className="text-sm font-medium">{section.label}</legend>
+                <p className="text-xs text-muted-foreground">{section.hint}</p>
               </div>
-              <div className="text-[11px] text-muted-foreground">
-                Hide everything that isn't in these categories
-              </div>
+              {selected.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setCategoryFilters({ ...categoryFilters, [section.id]: [] })}
+                  className="shrink-0 rounded text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Clear
+                </button>
+              )}
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {categories.map((c) => {
-                const isSelected = categoryFilters.include.includes(c.id);
-                return (
-                  <button
-                    key={`inc-${c.id}`}
-                    type="button"
-                    onClick={() => toggle("include", c.id)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
-                      isSelected
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-secondary/60 text-foreground border-border hover:bg-secondary"
-                    )}
-                    aria-pressed={isSelected}
-                  >
-                    {isSelected && <Check className="w-3 h-3" />}
-                    {c.name}
-                  </button>
-                );
-              })}
+            <div className="flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <Chip
+                  key={`${section.id}-${c.id}`}
+                  tone={section.tone}
+                  selected={selected.includes(c.id)}
+                  showCheck
+                  onClick={() => toggle(section.id, c.id)}
+                  className="h-9"
+                >
+                  {c.name}
+                </Chip>
+              ))}
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <div>
-              <div className="text-xs font-semibold text-foreground">Hide</div>
-              <div className="text-[11px] text-muted-foreground">
-                Hide all expenses in these categories
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {categories.map((c) => {
-                const isSelected = categoryFilters.exclude.includes(c.id);
-                return (
-                  <button
-                    key={`exc-${c.id}`}
-                    type="button"
-                    onClick={() => toggle("exclude", c.id)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
-                      isSelected
-                        ? "bg-destructive text-destructive-foreground border-destructive"
-                        : "bg-secondary/60 text-foreground border-border hover:bg-secondary"
-                    )}
-                    aria-pressed={isSelected}
-                  >
-                    {isSelected && <Check className="w-3 h-3" />}
-                    {c.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </>
-      )}
+          </fieldset>
+        );
+      })}
     </div>
   );
 };

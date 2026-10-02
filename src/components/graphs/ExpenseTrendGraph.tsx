@@ -1,160 +1,176 @@
-import { useMemo } from "react";
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  ComposedChart,
-} from "recharts";
-import { format } from "date-fns";
+import { useId, useMemo } from "react";
+import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis, type TooltipProps } from "recharts";
+import { addDays, addMonths, addWeeks, format, startOfMonth, startOfWeek } from "date-fns";
+import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
+import { formatMoneyCompact, parseDay } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-interface Expense {
-  date: string;
-  amount: number;
-}
+export type TrendPeriod = "day" | "week" | "month";
 
 interface ExpenseTrendGraphProps {
-  expenses: Expense[];
-  period: "day" | "week" | "month";
+  expenses: { date: string; amount: number }[];
+  period: TrendPeriod;
+  className?: string;
 }
 
-export const ExpenseTrendGraph = ({
-  expenses,
-  period,
-}: ExpenseTrendGraphProps) => {
-  const chartData = useMemo(() => {
-    const grouped: Record<string, number> = {};
+interface TrendPoint {
+  /** Sortable bucket key: "yyyy-MM-dd" (day, or the Sunday a week starts on) or "yyyy-MM". */
+  key: string;
+  amount: number;
+  axisLabel: string;
+  tooltipLabel: string;
+}
 
-    expenses.forEach((expense) => {
-      const date = new Date(expense.date);
-      let key: string;
+/** Gaps between the first and last bucket are filled with zeros, up to this many points. */
+const MAX_FILLED_POINTS = 2000;
+/** Above this many points the line has no dots. */
+const MAX_DOTTED_POINTS = 31;
 
-      if (period === "day") {
-        key = format(date, "MMM dd");
-      } else if (period === "week") {
-        const weekStart = new Date(date);
-        weekStart.setDate(date.getDate() - date.getDay());
-        key = `Week of ${format(weekStart, "MMM dd")}`;
-      } else {
-        key = format(date, "MMM yyyy");
-      }
+const bucketStart = (date: Date, period: TrendPeriod) =>
+  period === "day" ? date : period === "week" ? startOfWeek(date, { weekStartsOn: 0 }) : startOfMonth(date);
 
-      grouped[key] = (grouped[key] || 0) + expense.amount;
-    });
+const keyOf = (date: Date, period: TrendPeriod) => format(date, period === "month" ? "yyyy-MM" : "yyyy-MM-dd");
 
-    // Convert to array and sort properly
-    const entries = Object.entries(grouped);
-    
-    // Sort by the original date keys
-    const sortedEntries = entries.sort((a, b) => {
-      if (period === "day") {
-        // Parse "MMM dd" format
-        const dateA = new Date(a[0] + " " + new Date().getFullYear());
-        const dateB = new Date(b[0] + " " + new Date().getFullYear());
-        return dateA.getTime() - dateB.getTime();
-      } else if (period === "week") {
-        // Parse "Week of MMM dd" format
-        const dateA = new Date(a[0].replace("Week of ", "") + " " + new Date().getFullYear());
-        const dateB = new Date(b[0].replace("Week of ", "") + " " + new Date().getFullYear());
-        return dateA.getTime() - dateB.getTime();
-      } else {
-        // Parse "MMM yyyy" format
-        const dateA = new Date(a[0] + " 01");
-        const dateB = new Date(b[0] + " 01");
-        return dateA.getTime() - dateB.getTime();
-      }
-    });
+const dateOfKey = (key: string, period: TrendPeriod) => parseDay(period === "month" ? `${key}-01` : key);
 
-    return sortedEntries.map(([date, amount]) => ({ 
-      date, 
-      amount: Number(amount.toFixed(2)) 
-    }));
-  }, [expenses, period]);
+const nextBucket = (date: Date, period: TrendPeriod) =>
+  period === "day" ? addDays(date, 1) : period === "week" ? addWeeks(date, 1) : addMonths(date, 1);
 
-  // Warm theme colors (terracotta primary)
-  const PRIMARY = "#9F4F2D";
-  const PRIMARY_DARK = "#7F3F24";
-  const GRID = "#E1DCD5";
-  const AXIS = "#78716C";
+const buildPoints = (expenses: ExpenseTrendGraphProps["expenses"], period: TrendPeriod): TrendPoint[] => {
+  const totals = new Map<string, number>();
+  for (const expense of expenses) {
+    const key = keyOf(bucketStart(parseDay(expense.date), period), period);
+    totals.set(key, (totals.get(key) ?? 0) + expense.amount);
+  }
+  const keys = [...totals.keys()].sort();
+  if (keys.length === 0) return [];
 
-  const chartConfig = {
-    amount: {
-      label: "Amount",
-      color: PRIMARY,
-    },
-  };
+  const first = dateOfKey(keys[0], period);
+  const last = dateOfKey(keys[keys.length - 1], period);
+  const lastKey = keys[keys.length - 1];
 
-  if (chartData.length === 0) {
+  // Fill the quiet days/weeks/months so the line's spacing matches real time.
+  const filled: string[] = [];
+  for (let d = first; filled.length <= MAX_FILLED_POINTS; d = nextBucket(d, period)) {
+    const key = keyOf(d, period);
+    filled.push(key);
+    if (key >= lastKey) break;
+  }
+  const series = filled[filled.length - 1] === lastKey && filled.length <= MAX_FILLED_POINTS ? filled : keys;
+
+  const multiYear = first.getFullYear() !== last.getFullYear();
+  const axisPattern =
+    period === "month" ? (multiYear ? "MMM yy" : "MMM") : multiYear ? "d MMM yy" : "d MMM";
+  const tooltipPattern =
+    period === "day"
+      ? multiYear
+        ? "EEE d MMM yyyy"
+        : "EEE d MMM"
+      : period === "week"
+        ? multiYear
+          ? "'Week of' d MMM yyyy"
+          : "'Week of' d MMM"
+        : "MMMM yyyy";
+
+  return series.map((key) => {
+    const date = dateOfKey(key, period);
+    return {
+      key,
+      amount: Math.round((totals.get(key) ?? 0) * 100) / 100,
+      axisLabel: format(date, axisPattern),
+      tooltipLabel: format(date, tooltipPattern),
+    };
+  });
+};
+
+const chartConfig = {
+  amount: { label: "Spent", color: "hsl(var(--primary))" },
+} satisfies ChartConfig;
+
+const TrendTooltip = ({ active, payload }: TooltipProps<number, string>) => {
+  if (!active || !payload?.length) return null;
+  const point = payload[0].payload as TrendPoint;
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2 text-xs shadow-raised">
+      <span className="text-muted-foreground">{point.tooltipLabel}</span>
+      <span className="text-muted-foreground"> · </span>
+      <span className="font-semibold tabular-nums text-foreground">{formatMoneyCompact(point.amount)}</span>
+    </div>
+  );
+};
+
+/** Spending per day, week (starting Sunday) or month, as one primary-colour area. */
+export const ExpenseTrendGraph = ({ expenses, period, className }: ExpenseTrendGraphProps) => {
+  const gradientId = `trend-fill-${useId().replace(/:/g, "")}`;
+  const points = useMemo(() => buildPoints(expenses, period), [expenses, period]);
+  const labelByKey = useMemo(() => new Map(points.map((p) => [p.key, p.axisLabel])), [points]);
+
+  if (points.length === 0) {
     return (
-      <div className="flex items-center justify-center h-80 text-muted-foreground">
-        No data available for the selected period
+      <div
+        className={cn(
+          "flex h-[220px] items-center justify-center text-sm text-muted-foreground sm:h-[300px]",
+          className
+        )}
+      >
+        Nothing to chart for this period.
       </div>
     );
   }
 
+  const peak = points.reduce((max, p) => Math.max(max, p.amount), 0);
+  // Room for the longest tick label, e.g. "₹1,20,000".
+  const yAxisWidth = Math.max(44, Math.round(formatMoneyCompact(Math.ceil(peak)).length * 6.6) + 10);
+  const showDots = points.length <= MAX_DOTTED_POINTS;
+
   return (
-    <ChartContainer config={chartConfig} className="h-80 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 60 }}>
-          <defs>
-            <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={PRIMARY} stopOpacity={0.45} />
-              <stop offset="50%" stopColor={PRIMARY} stopOpacity={0.18} />
-              <stop offset="95%" stopColor={PRIMARY} stopOpacity={0.04} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke={GRID} opacity={0.7} />
-          <XAxis
-            dataKey="date"
-            tick={{ fontSize: 11, fill: AXIS }}
-            angle={-45}
-            textAnchor="end"
-            height={80}
-            interval="preserveStartEnd"
-          />
-          <YAxis
-            tick={{ fontSize: 11, fill: AXIS }}
-            tickFormatter={(value) => `₹${value >= 1000 ? (value / 1000).toFixed(1) + 'k' : value.toFixed(0)}`}
-          />
-          <ChartTooltip
-            content={<ChartTooltipContent />}
-            formatter={(value: number) => [`₹${value.toFixed(2)}`, "Amount"]}
-            labelFormatter={(label) => `Period: ${label}`}
-            cursor={{ stroke: PRIMARY, strokeWidth: 2, strokeDasharray: "5 5" }}
-          />
-          <Area
-            type="monotone"
-            dataKey="amount"
-            stroke="none"
-            fill="url(#colorAmount)"
-            fillOpacity={1}
-          />
-          <Line
-            type="monotone"
-            dataKey="amount"
-            stroke={PRIMARY}
-            strokeWidth={2.5}
-            dot={{
-              fill: PRIMARY,
-              r: 4,
-              strokeWidth: 2,
-              stroke: "#ffffff",
-            }}
-            activeDot={{
-              r: 6,
-              strokeWidth: 2,
-              stroke: PRIMARY_DARK,
-              fill: PRIMARY,
-            }}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+    <ChartContainer config={chartConfig} className={cn("aspect-auto h-[220px] w-full sm:h-[300px]", className)}>
+      <AreaChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} accessibilityLayer>
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--color-amount)" stopOpacity={0.24} />
+            <stop offset="100%" stopColor="var(--color-amount)" stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
+        <XAxis
+          dataKey="key"
+          tickFormatter={(key: string) => labelByKey.get(key) ?? key}
+          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          minTickGap={20}
+          interval="preserveStartEnd"
+        />
+        <YAxis
+          width={yAxisWidth}
+          tickFormatter={(value: number) => formatMoneyCompact(value)}
+          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+          tickLine={false}
+          axisLine={false}
+          allowDecimals={false}
+        />
+        <Tooltip
+          content={<TrendTooltip />}
+          cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+        />
+        <Area
+          type="monotone"
+          dataKey="amount"
+          name="Spent"
+          stroke="var(--color-amount)"
+          strokeWidth={2}
+          fill={`url(#${gradientId})`}
+          dot={
+            showDots
+              ? { r: 3, fill: "var(--color-amount)", stroke: "hsl(var(--card))", strokeWidth: 1.5 }
+              : false
+          }
+          activeDot={{ r: 4.5, fill: "var(--color-amount)", stroke: "hsl(var(--card))", strokeWidth: 2 }}
+          isAnimationActive={false}
+        />
+      </AreaChart>
     </ChartContainer>
   );
 };
-

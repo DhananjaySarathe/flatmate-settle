@@ -1,203 +1,241 @@
-import { ReactNode, useEffect, useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { ReactNode, Suspense, useEffect, useState } from "react";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import type { User } from "@supabase/supabase-js";
+import {
+  BarChart3,
+  Home,
+  LogOut,
+  Plus,
+  Receipt,
+  Settings2,
+  Wallet,
+  HandCoins,
+  type LucideIcon,
+} from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import { User, Session } from "@supabase/supabase-js";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  LayoutDashboard,
-  Receipt,
-  FileText,
-  LogOut,
-  Wallet,
-  Menu,
-  X,
-  TrendingUp,
-  Trophy,
-  DollarSign,
-} from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import { SplitSpaceSelector } from "@/components/SplitSpaceSelector";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { SpaceSwitcher } from "@/components/layout/SpaceSwitcher";
+import { ExpenseComposerProvider, useExpenseComposer } from "@/contexts/ExpenseComposerContext";
+import { cn } from "@/lib/utils";
 
 interface LayoutProps {
-  children: ReactNode;
+  /** Optional: used as a layout route, the matched page renders through <Outlet />. */
+  children?: ReactNode;
 }
 
-const Layout = ({ children }: LayoutProps) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const navigate = useNavigate();
-  const location = useLocation();
+interface NavItem {
+  path: string;
+  label: string;
+  icon: LucideIcon;
+  /** Extra routes that light this item up. */
+  also?: string[];
+}
 
+const NAV_ITEMS: NavItem[] = [
+  { path: "/dashboard", label: "Home", icon: Home },
+  { path: "/expenses", label: "Expenses", icon: Receipt },
+  { path: "/reports", label: "Settle up", icon: HandCoins },
+  { path: "/analytics", label: "Insights", icon: BarChart3, also: ["/my-cost", "/leaderboard"] },
+];
+
+const isActive = (item: NavItem, pathname: string) =>
+  pathname === item.path || (item.also ?? []).includes(pathname);
+
+const Layout = ({ children }: LayoutProps) => (
+  <ExpenseComposerProvider>
+    <Shell>{children}</Shell>
+  </ExpenseComposerProvider>
+);
+
+const Shell = ({ children }: LayoutProps) => {
+  const [user, setUser] = useState<User | null>(null);
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const { openNew } = useExpenseComposer();
+
+  // There is no route guard; the shell sends signed-out visitors to /auth.
   useEffect(() => {
-    // Set up auth state listener
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session);
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (!session) navigate("/auth");
     });
 
-    // Check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
       setUser(session?.user ?? null);
-
-      if (!session && location.pathname !== "/auth") {
-        navigate("/auth");
-      }
+      if (!session) navigate("/auth");
     });
 
     return () => subscription.unsubscribe();
-  }, [navigate, location.pathname]);
+  }, [navigate]);
 
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
-      toast.error("Error logging out");
+      toast.error("Couldn't sign out", { description: error.message });
     } else {
-      toast.success("Logged out successfully");
+      toast.success("Signed out");
       navigate("/auth");
     }
   };
 
-  const isActive = (path: string) => location.pathname === path;
-
-  const navItems = [
-    { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-    { path: "/expenses", icon: Receipt, label: "Expenses" },
-    { path: "/reports", icon: FileText, label: "Reports" },
-    { path: "/analytics", icon: TrendingUp, label: "Analytics" },
-    { path: "/leaderboard", icon: Trophy, label: "Leaderboard" },
-    { path: "/my-cost", icon: DollarSign, label: "My Cost" },
-  ];
+  const displayName = (user?.user_metadata?.full_name as string | undefined) || user?.email || "Account";
 
   return (
-    <div className="min-h-screen bg-background overflow-x-hidden">
-      {/* Header */}
-      <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-card/80 backdrop-blur-xl">
-        <div className="container flex h-16 items-center justify-between px-4">
-          <Link to="/dashboard" className="flex items-center space-x-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary to-amber-500 rounded-xl flex items-center justify-center shadow-md shadow-primary/20">
-              <Wallet className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <span className="text-lg sm:text-xl font-bold gradient-text">
-              ExpenseWaale
+    <div className="min-h-dvh bg-background">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-md focus:bg-card focus:px-3 focus:py-2 focus:shadow-raised"
+      >
+        Skip to content
+      </a>
+
+      <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6 md:h-16">
+          <Link
+            to="/dashboard"
+            className="flex shrink-0 items-center gap-2 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="ExpenseWaale home"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Wallet className="h-4 w-4" aria-hidden="true" />
             </span>
+            <span className="hidden text-base font-bold tracking-tight lg:inline">ExpenseWaale</span>
           </Link>
 
-          {/* SplitSpace Selector */}
-          <div className="hidden md:flex items-center">
-            <SplitSpaceSelector />
-          </div>
+          <span className="hidden h-6 w-px bg-border sm:block" aria-hidden="true" />
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center space-x-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
+          <SpaceSwitcher className="min-w-0 max-w-[14rem] flex-shrink" />
+
+          <nav className="ml-2 hidden items-center gap-1 md:flex" aria-label="Main">
+            {NAV_ITEMS.map((item) => {
+              const active = isActive(item, pathname);
               return (
-                <Link key={item.path} to={item.path}>
-                  <Button
-                    variant="ghost"
-                    className={`relative ${
-                      isActive(item.path)
-                        ? "text-primary bg-primary/10"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 mr-2" />
-                    {item.label}
-                    {isActive(item.path) && (
-                      <motion.div
-                        layoutId="activeTab"
-                        className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
-                        initial={false}
-                        transition={{
-                          type: "spring",
-                          stiffness: 500,
-                          damping: 30,
-                        }}
-                      />
-                    )}
-                  </Button>
-                </Link>
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    active
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  )}
+                >
+                  {item.label}
+                </NavLink>
               );
             })}
           </nav>
 
-          <div className="flex items-center space-x-2">
-            {user && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleLogout}
-                className="text-muted-foreground hover:text-destructive transition-colors"
-              >
-                <LogOut className="w-5 h-5" />
-              </Button>
-            )}
-
-            {/* Mobile Menu Button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? (
-                <X className="w-5 h-5" />
-              ) : (
-                <Menu className="w-5 h-5" />
-              )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Button onClick={openNew} className="hidden md:inline-flex">
+              <Plus /> Add expense
             </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-sm font-semibold text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Account menu"
+              >
+                {displayName.charAt(0).toUpperCase()}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuLabel className="font-normal">
+                  <p className="truncate text-sm font-semibold">{displayName}</p>
+                  {user?.email && displayName !== user.email && (
+                    <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="gap-2 py-2" onSelect={() => navigate("/split-spaces")}>
+                  <Settings2 className="h-4 w-4" /> Manage groups
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 py-2 text-debit focus:bg-debit-soft focus:text-debit"
+                  onSelect={handleLogout}
+                >
+                  <LogOut className="h-4 w-4" /> Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-
-        {/* Mobile Navigation */}
-        <AnimatePresence>
-          {mobileMenuOpen && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="md:hidden border-t border-border/50 bg-card/95 backdrop-blur-xl overflow-hidden"
-            >
-              <nav className="flex flex-col p-4 space-y-2">
-                <div className="mb-2 pb-2 border-b">
-                  <SplitSpaceSelector />
-                </div>
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      <Button
-                        variant="ghost"
-                        className={`w-full justify-start ${
-                          isActive(item.path)
-                            ? "text-primary bg-primary/10"
-                            : "text-muted-foreground"
-                        }`}
-                      >
-                        <Icon className="w-4 h-4 mr-2" />
-                        {item.label}
-                      </Button>
-                    </Link>
-                  );
-                })}
-              </nav>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </header>
 
-      {/* Main Content */}
-      <main className="container px-4 py-6 sm:py-8">{children}</main>
+      <main id="main" className="mx-auto max-w-6xl px-4 pb-tabbar pt-5 sm:px-6 sm:pt-8 md:pb-16">
+        <Suspense fallback={<PageFallback />}>{children ?? <Outlet />}</Suspense>
+      </main>
+
+      <BottomNav pathname={pathname} onAdd={openNew} />
     </div>
+  );
+};
+
+const PageFallback = () => (
+  <div aria-busy="true" aria-label="Loading">
+    <Skeleton className="mb-2 h-8 w-44" />
+    <Skeleton className="mb-8 h-4 w-64" />
+    <Skeleton className="h-64 rounded-xl" />
+  </div>
+);
+
+/** Phone navigation: four destinations with "Add expense" in the thumb-friendly centre. */
+const BottomNav = ({ pathname, onAdd }: { pathname: string; onAdd: () => void }) => {
+  const [first, second, third, fourth] = NAV_ITEMS;
+
+  const renderItem = (item: NavItem) => {
+    const active = isActive(item, pathname);
+    const Icon = item.icon;
+    return (
+      <NavLink
+        key={item.path}
+        to={item.path}
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "flex flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          active ? "text-primary" : "text-muted-foreground"
+        )}
+      >
+        <Icon className="h-5 w-5" strokeWidth={active ? 2.4 : 2} aria-hidden="true" />
+        {item.label}
+      </NavLink>
+    );
+  };
+
+  return (
+    <nav
+      aria-label="Main"
+      className="fixed inset-x-0 bottom-0 z-40 border-t bg-card/95 pb-safe backdrop-blur supports-[backdrop-filter]:bg-card/85 md:hidden"
+    >
+      <div className="mx-auto grid h-[var(--tabbar-height)] max-w-md grid-cols-5">
+        {renderItem(first)}
+        {renderItem(second)}
+        <div className="flex items-center justify-center">
+          <button
+            type="button"
+            onClick={onAdd}
+            aria-label="Add expense"
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-raised transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <Plus className="h-6 w-6" aria-hidden="true" />
+          </button>
+        </div>
+        {renderItem(third)}
+        {renderItem(fourth)}
+      </div>
+    </nav>
   );
 };
 

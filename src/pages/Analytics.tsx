@@ -1,944 +1,393 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  CalendarIcon,
-  Loader2,
-  Download,
-  TrendingUp,
-  Filter,
-  X,
-  Wallet,
-  CalendarDays,
-  Users as UsersIcon,
-  Scale,
-  Flame,
-  Target,
-} from "lucide-react";
-import { format } from "date-fns";
-import { cn } from "@/lib/utils";
+import { useMemo, useState } from "react";
+import { differenceInCalendarDays, max as maxDate, min as minDate, startOfDay } from "date-fns";
 import { toast } from "sonner";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Panel, Section } from "@/components/common/PageHeader";
+import { EmptyState } from "@/components/common/EmptyState";
+import { PeriodPicker } from "@/components/filters/PeriodPicker";
+import { ActiveFiltersNotice, FiltersButton, FiltersPanel } from "@/components/filters/FiltersPanel";
+import { ExpenseTrendGraph, type TrendPeriod } from "@/components/graphs/ExpenseTrendGraph";
+import { StatTile } from "@/components/insights/StatTile";
+import {
+  InsightsError,
+  InsightsHeader,
+  InsightsNoExpenses,
+  InsightsNoGroup,
+  InsightsNoPeople,
+  InsightsPage,
+  InsightsSkeleton,
+} from "@/components/insights/InsightsChrome";
+import {
+  biggestDays,
+  categoryBreakdown,
+  formatPercent,
+  sumAmounts,
+  type CategoryTotal,
+  type DayTotal,
+} from "@/components/insights/insightMath";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
-import autoTable from "jspdf-autotable";
-import {
-  drawPdfHeader,
-  drawPdfFooter,
-  drawSectionTitle,
-  drawBody,
-  tableStyles,
-  accentTableStyles,
-  createPdfDoc,
-  pdfAmount,
-} from "@/lib/pdfStyle";
-import { ExpenseTrendGraph } from "@/components/graphs/ExpenseTrendGraph";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
-import { PeopleFilters } from "@/components/PeopleFilters";
-import { CategoryFilterSection } from "@/components/CategoryFilterChips";
-import { Badge } from "@/components/ui/badge";
+import { useSpaceData } from "@/hooks/useSpaceData";
 import { useReportFilters } from "@/hooks/useReportFilters";
+import { useSettleView } from "@/hooks/useSettleView";
+import type { DateRange } from "@/lib/expenseFilters";
+import { formatDay, formatMoney, formatMoneyCompact, parseDay, pluralize } from "@/lib/format";
+import { generateAnalyticsSummaryPDF } from "@/lib/insightExports";
+import { cn } from "@/lib/utils";
 
-interface Flatmate {
-  id: string;
-  name: string;
-}
-
-interface Category {
-  id: string;
-  name: string;
-}
-
-interface Expense {
-  id: string;
-  title: string;
-  amount: number;
-  date: string;
-  paid_by: string;
-  category_id?: string;
-  categories?: {
-    name: string;
-  };
-  expense_splits: { flatmate_id: string }[];
-}
+const TREND_PERIODS: { value: TrendPeriod; label: string }[] = [
+  { value: "day", label: "Daily" },
+  { value: "week", label: "Weekly" },
+  { value: "month", label: "Monthly" },
+];
 
 export default function Analytics() {
-  const {
-    selectedSplitSpace,
-    splitSpaces,
-    loading: contextLoading,
-  } = useSplitSpace();
-  const [loading, setLoading] = useState(true);
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const { selectedSplitSpace, splitSpaces, loading: spacesLoading } = useSplitSpace();
+  const { people, expenses, settlements, categories, isLoading, error, refetch } = useSpaceData(
+    selectedSplitSpace?.id
+  );
   const {
     dateRange,
+    datePreset,
     peopleFilters,
     categoryFilters,
     setDateRange,
+    setDatePreset,
     setPeopleFilters,
     setCategoryFilters,
     resetFilters,
   } = useReportFilters();
-  const [pdfLoading, setPdfLoading] = useState<string | null>(null);
-  const [graphPeriod, setGraphPeriod] = useState<"day" | "week" | "month">("day");
-  const [filtersModalOpen, setFiltersModalOpen] = useState(false);
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
+  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("day");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
-  useEffect(() => {
-    if (contextLoading) return;
-    if (splitSpaces.length === 0 || !selectedSplitSpace) {
-      setLoading(false);
-      return;
-    }
-    fetchData();
-  }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
+  const hasSettlements = settlements.length > 0;
+  // Same period and filter resolution as Settle up, including ignoring stored
+  // filter IDs (people from another group, deleted categories) that don't apply here.
+  const { range, inPeriod, filtered, activeFilters: filterCount } = useSettleView({
+    people,
+    expenses,
+    settlements,
+    preset: datePreset,
+    customRange: dateRange,
+    peopleFilters,
+    categoryFilters,
+    categories,
+  });
 
-  // Apply filters to expenses
-  useEffect(() => {
-    let filteredExpenses = [...allExpenses];
+  const total = useMemo(() => sumAmounts(filtered), [filtered]);
+  const { days, soFar } = useMemo(() => perDaySpan(range, inPeriod), [range, inPeriod]);
+  const perDay = total / days;
+  const perPerson = people.length > 0 ? total / people.length : 0;
+  const byCategory = useMemo(() => categoryBreakdown(filtered, categories), [filtered, categories]);
+  const topCategory = byCategory.find((c) => !c.uncategorised && c.total > 0) ?? null;
+  const topDays = useMemo(() => biggestDays(filtered, 5), [filtered]);
 
-    // Apply people filters
-    if (peopleFilters.exactMatch.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return peopleFilters.exactMatch.every((id) =>
-          expenseFlatmateIds.includes(id)
-        );
-      });
-    }
+  const ready = !spacesLoading && !isLoading && !error && !!selectedSplitSpace;
 
-    if (peopleFilters.anyMatch.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return peopleFilters.anyMatch.some((id) =>
-          expenseFlatmateIds.includes(id)
-        );
-      });
-    }
-
-    if (peopleFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return !peopleFilters.exclude.some(
-          (id) => expenseFlatmateIds.includes(id) || expense.paid_by === id
-        );
-      });
-    }
-
-    if (peopleFilters.paidBy.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) =>
-        peopleFilters.paidBy.includes(expense.paid_by)
-      );
-    }
-
-    // Apply category filters
-    if (categoryFilters.include.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          expense.category_id &&
-          categoryFilters.include.includes(expense.category_id)
-        );
-      });
-    }
-
-    if (categoryFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          !expense.category_id ||
-          !categoryFilters.exclude.includes(expense.category_id)
-        );
-      });
-    }
-
-    setExpenses(filteredExpenses);
-  }, [allExpenses, peopleFilters, categoryFilters]);
-
-  const fetchData = async () => {
-    if (!selectedSplitSpace) return;
-
-    setLoading(true);
+  const downloadPdf = async () => {
+    setPdfBusy(true);
     try {
-      const [flatmatesRes, expensesRes, categoriesRes] = await Promise.all([
-        supabase
-          .from("flatmates")
-          .select("id, name")
-          .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-          .order("name"),
-        supabase
-          .from("expenses")
-          .select(
-            `
-            *,
-            categories (name),
-            expense_splits (flatmate_id)
-          `
-          )
-          .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-          .gte("date", format(dateRange.from, "yyyy-MM-dd"))
-          .lte("date", format(dateRange.to, "yyyy-MM-dd"))
-          .order("date", { ascending: false }),
-        supabase
-          .from("categories")
-          .select("id, name")
-          .eq("created_by", (await supabase.auth.getUser()).data.user?.id || "")
-          .order("name"),
-      ]);
-
-      if (flatmatesRes.error) throw flatmatesRes.error;
-      if (expensesRes.error) throw expensesRes.error;
-      if (categoriesRes.error) throw categoriesRes.error;
-
-      setFlatmates(flatmatesRes.data || []);
-      setAllExpenses(expensesRes.data || []);
-      // Don't set expenses here - let the filter useEffect handle it
-      setCategories(categoriesRes.data || []);
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-      toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
+      // Let the button show its busy state before the (synchronous) build runs.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const fileName = generateAnalyticsSummaryPDF({
+        spaceName: selectedSplitSpace?.name,
+        range,
+        categoryTotals: byCategory,
+        totalExpenses: total,
+        mostExpensiveCategory: topCategory ?? { name: "N/A", total: 0 },
+        avgPerDay: perDay,
+        avgPerPerson: perPerson,
+        topDays,
+      });
+      toast.success("Downloaded the spending summary", { description: fileName });
+    } catch (err) {
+      console.error("Error generating PDF:", err);
+      toast.error("Couldn't create the PDF", { description: "Try again. If it keeps failing, reload the page." });
     } finally {
-      setLoading(false);
+      setPdfBusy(false);
     }
   };
 
-  // Apply filters to expenses - this runs whenever filters or allExpenses change
-  useEffect(() => {
-    if (allExpenses.length === 0) {
-      setExpenses([]);
-      return;
-    }
-    
-    let filteredExpenses = [...allExpenses];
-
-    // Apply people filters
-    if (peopleFilters.exactMatch.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return peopleFilters.exactMatch.every((id) =>
-          expenseFlatmateIds.includes(id)
-        );
-      });
-    }
-
-    if (peopleFilters.anyMatch.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return peopleFilters.anyMatch.some((id) =>
-          expenseFlatmateIds.includes(id)
-        );
-      });
-    }
-
-    if (peopleFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return !peopleFilters.exclude.some(
-          (id) => expenseFlatmateIds.includes(id) || expense.paid_by === id
-        );
-      });
-    }
-
-    if (peopleFilters.paidBy.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) =>
-        peopleFilters.paidBy.includes(expense.paid_by)
-      );
-    }
-
-    // Apply category filters
-    if (categoryFilters.include.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          expense.category_id &&
-          categoryFilters.include.includes(expense.category_id)
-        );
-      });
-    }
-
-    if (categoryFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          !expense.category_id ||
-          !categoryFilters.exclude.includes(expense.category_id)
-        );
-      });
-    }
-
-    setExpenses(filteredExpenses);
-  }, [allExpenses, peopleFilters, categoryFilters]);
-
-  // Calculate category totals - uses filtered expenses
-  const categoryTotals = categories.map((category) => {
-    const categoryExpenses = expenses.filter(
-      (exp) => exp.category_id === category.id
-    );
-    const total = categoryExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const percentage =
-      expenses.length > 0
-        ? (total / expenses.reduce((sum, exp) => sum + exp.amount, 0)) * 100
-        : 0;
-    return {
-      ...category,
-      total,
-      percentage,
-      count: categoryExpenses.length,
-    };
-  });
-
-  const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-  const mostExpensiveCategory = categoryTotals.reduce(
-    (max, cat) => (cat.total > max.total ? cat : max),
-    categoryTotals[0] || { name: "N/A", total: 0 }
+  const header = (
+    <InsightsHeader
+      onDownload={downloadPdf}
+      downloading={pdfBusy}
+      canDownload={ready && people.length > 0}
+    />
   );
 
-  // Calculate person-wise totals
-  const personTotals = flatmates.map((flatmate) => {
-    const paidExpenses = expenses.filter((exp) => exp.paid_by === flatmate.id);
-    const totalPaid = paidExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-    return {
-      ...flatmate,
-      totalPaid,
-      expenseCount: paidExpenses.length,
-    };
-  });
-
-  // Top 5 most expensive days
-  const dailyTotals = expenses.reduce((acc, exp) => {
-    const date = exp.date;
-    if (!acc[date]) {
-      acc[date] = { date, total: 0, count: 0 };
-    }
-    acc[date].total += exp.amount;
-    acc[date].count += 1;
-    return acc;
-  }, {} as Record<string, { date: string; total: number; count: number }>);
-
-  const topDays = Object.values(dailyTotals)
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 5);
-
-  // Average expense per day
-  const daysDiff =
-    Math.ceil(
-      (dateRange.to.getTime() - dateRange.from.getTime()) / (1000 * 60 * 60 * 24)
-    ) || 1;
-  const avgPerDay = totalExpenses / daysDiff;
-  const avgPerPerson = flatmates.length > 0 ? totalExpenses / flatmates.length : 0;
-
-  // Fairness score (lower variance = more fair)
-  const personAmounts = personTotals.map((p) => p.totalPaid);
-  const mean = personAmounts.reduce((sum, amt) => sum + amt, 0) / personAmounts.length || 1;
-  const variance =
-    personAmounts.reduce((sum, amt) => sum + Math.pow(amt - mean, 2), 0) /
-    personAmounts.length;
-  const fairnessScore = Math.max(0, 100 - Math.sqrt(variance) * 10);
-
-  const generateAnalyticsSummaryPDF = async () => {
-    setPdfLoading("summary");
-    try {
-      const doc = createPdfDoc();
-      const period = `${format(dateRange.from, "MMM d, yyyy")} – ${format(
-        dateRange.to,
-        "MMM d, yyyy"
-      )}`;
-
-      let y = drawPdfHeader(doc, {
-        title: "Analytics Summary",
-        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
-        meta: format(new Date(), "MMM d, yyyy"),
-      });
-      y = drawBody(doc, `Period: ${period}`, y, { muted: true });
-      y += 4;
-
-      y = drawSectionTitle(doc, "Category Breakdown", y);
-
-      const categoryData = categoryTotals
-        .filter((cat) => cat.total > 0)
-        .sort((a, b) => b.total - a.total)
-        .map((cat) => [
-          cat.name,
-          pdfAmount(cat.total),
-          `${cat.percentage.toFixed(1)}%`,
-          cat.count.toString(),
-        ]);
-
-      autoTable(doc, {
-        ...tableStyles({
-          startY: y + 2,
-          head: [["Category", "Total", "%", "Count"]],
-          body: categoryData,
-          columnStyles: {
-            1: { halign: "right", fontStyle: "bold" },
-            2: { halign: "right" },
-            3: { halign: "center" },
-          },
-          didDrawPage: () => drawPdfFooter(doc),
-        }),
-      });
-
-      const finalY = (doc as any).lastAutoTable?.finalY || y;
-
-      let cursorY = drawSectionTitle(doc, "Key Insights", finalY + 14);
-      cursorY = drawBody(doc, `Total expenses: ${pdfAmount(totalExpenses)}`, cursorY + 4);
-      cursorY = drawBody(
-        doc,
-        `Most expensive category: ${mostExpensiveCategory.name} (${pdfAmount(mostExpensiveCategory.total)})`,
-        cursorY
-      );
-      cursorY = drawBody(doc, `Average per day: ${pdfAmount(avgPerDay)}`, cursorY);
-      cursorY = drawBody(doc, `Average per person: ${pdfAmount(avgPerPerson)}`, cursorY);
-      cursorY = drawBody(doc, `Fairness score: ${fairnessScore.toFixed(1)}/100`, cursorY);
-
-      if (topDays.length > 0) {
-        cursorY = drawSectionTitle(doc, "Top 5 Most Expensive Days", cursorY + 8);
-
-        const topDaysData = topDays.map((day, idx) => [
-          `${idx + 1}`,
-          format(new Date(day.date), "MMM d, yyyy"),
-          pdfAmount(day.total),
-          day.count.toString(),
-        ]);
-
-        autoTable(doc, {
-          ...accentTableStyles({
-            startY: cursorY + 2,
-            head: [["#", "Date", "Total", "Expenses"]],
-            body: topDaysData,
-            columnStyles: {
-              0: { halign: "center", cellWidth: 14 },
-              2: { halign: "right", fontStyle: "bold" },
-              3: { halign: "center" },
-            },
-            didDrawPage: () => drawPdfFooter(doc),
-          }),
-        });
-      }
-
-      drawPdfFooter(doc);
-
-      doc.save(
-        `analytics_${format(dateRange.from, "yyyy-MM-dd")}_to_${format(
-          dateRange.to,
-          "yyyy-MM-dd"
-        )}.pdf`
-      );
-      toast.success("Analytics PDF downloaded successfully!");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      toast.error("Failed to generate PDF");
-    } finally {
-      setPdfLoading(null);
-    }
-  };
-
-  if (!selectedSplitSpace && splitSpaces.length > 0) {
+  if (spacesLoading || (isLoading && !error)) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
-      </div>
+      <InsightsPage>
+        {header}
+        <InsightsSkeleton variant="spending" />
+      </InsightsPage>
     );
   }
 
-  if (loading) {
+  if (!selectedSplitSpace) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <InsightsPage>
+        {header}
+        <InsightsNoGroup hasGroups={splitSpaces.length > 0} />
+      </InsightsPage>
+    );
+  }
+
+  if (error) {
+    return (
+      <InsightsPage>
+        {header}
+        <InsightsError error={error} onRetry={() => refetch()} />
+      </InsightsPage>
+    );
+  }
+
+  if (people.length === 0) {
+    return (
+      <InsightsPage>
+        {header}
+        <InsightsNoPeople />
+      </InsightsPage>
+    );
+  }
+
+  if (expenses.length === 0) {
+    return (
+      <InsightsPage>
+        {header}
+        <InsightsNoExpenses
+          title="No spending to show yet"
+          description="Add your first shared expense and this page fills in with totals, trends and categories."
+        />
+      </InsightsPage>
     );
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1">Analytics</h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            Spending patterns, trends, and fairness — at a glance.
-          </p>
-          {selectedSplitSpace && (
-            <p className="text-xs text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        <Button
-          onClick={generateAnalyticsSummaryPDF}
-          disabled={pdfLoading !== null}
-          variant="outline"
-          className="self-start sm:self-auto"
-        >
-          {pdfLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" />
-              Download PDF
-            </>
-          )}
-        </Button>
+    <InsightsPage>
+      {header}
+
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <PeriodPicker
+          className="min-w-0 flex-1"
+          preset={datePreset}
+          onPresetChange={setDatePreset}
+          range={range}
+          onCustomRangeChange={setDateRange}
+          hasSettlements={hasSettlements}
+        />
+        <FiltersButton count={filterCount} onClick={() => setFiltersOpen(true)} className="self-start" />
       </div>
 
-      {/* Date Range */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Select Date Range</CardTitle>
-            {flatmates.length > 0 && (
-              <Dialog
-                open={filtersModalOpen}
-                onOpenChange={setFiltersModalOpen}
-              >
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <Filter className="w-4 h-4" />
-                    Filters
-                    {(peopleFilters.exactMatch.length > 0 ||
-                      peopleFilters.anyMatch.length > 0 ||
-                      peopleFilters.exclude.length > 0 ||
-                      peopleFilters.paidBy.length > 0 ||
-                      categoryFilters.include.length > 0 ||
-                      categoryFilters.exclude.length > 0) && (
-                      <Badge
-                        variant="secondary"
-                        className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
-                      >
-                        {peopleFilters.exactMatch.length +
-                          peopleFilters.anyMatch.length +
-                          peopleFilters.exclude.length +
-                          peopleFilters.paidBy.length +
-                          categoryFilters.include.length +
-                          categoryFilters.exclude.length}
-                      </Badge>
-                    )}
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <Filter className="w-5 h-5 text-primary" />
-                      Filters
-                    </DialogTitle>
-                    <DialogDescription>
-                      Narrow down what you're analyzing.
-                    </DialogDescription>
-                  </DialogHeader>
+      <ActiveFiltersNotice
+        count={filterCount}
+        shown={filtered.length}
+        total={inPeriod.length}
+        onEdit={() => setFiltersOpen(true)}
+        onClear={resetFilters}
+        consequence="These insights only count those."
+      />
 
-                  <div className="space-y-6 mt-2">
-                    <PeopleFilters
-                      flatmates={flatmates}
-                      onFiltersChange={setPeopleFilters}
-                    />
+      <dl className={cn("grid grid-cols-2 gap-3 lg:grid-cols-4", filterCount > 0 && "mt-4")}>
+        <StatTile label="Total spent" value={formatMoneyCompact(total)} sub={pluralize(filtered.length, "expense")} />
+        <StatTile
+          label="Per day"
+          value={formatMoney(perDay, { decimals: 0 })}
+          sub={`over ${pluralize(days, "day")}${soFar ? " so far" : ""}`}
+        />
+        <StatTile
+          label="Per person"
+          value={formatMoney(perPerson, { decimals: 0 })}
+          sub={pluralize(people.length, "person", "people")}
+        />
+        <StatTile
+          label="Top category"
+          value={topCategory ? topCategory.name : "—"}
+          sub={
+            topCategory
+              ? `${formatMoneyCompact(topCategory.total)} · ${formatPercent(topCategory.percentage)}`
+              : filtered.length > 0
+                ? "Nothing categorised"
+                : undefined
+          }
+        />
+      </dl>
 
-                    <Separator />
-
-                    <CategoryFilterSection
-                      categories={categories}
-                      categoryFilters={categoryFilters}
-                      setCategoryFilters={setCategoryFilters}
-                    />
-                  </div>
-
-                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-6 pt-4 border-t">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        resetFilters();
-                      }}
-                    >
-                      <X className="w-4 h-4 mr-2" />
-                      Reset all
-                    </Button>
-                    <Button onClick={() => setFiltersModalOpen(false)}>
-                      Apply
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-[240px] justify-start text-left font-normal">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {format(dateRange.from, "PPP")}
+      {filtered.length === 0 ? (
+        <Panel className="mt-6">
+          <EmptyState
+            compact
+            title="No spending in this period."
+            description={
+              filterCount > 0
+                ? "Your filters hide every expense from this period."
+                : datePreset === "since-settlement" && hasSettlements
+                  ? "Nothing has been added since the last settle-up. Pick another period to look back."
+                  : "Pick a different period to see where the money went."
+            }
+            action={
+              filterCount > 0 ? (
+                <Button variant="outline" onClick={resetFilters}>
+                  <X /> Clear filters
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.from}
-                  onSelect={(date) => date && setDateRange({ ...dateRange, from: date })}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-            <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">to</span>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-[240px] justify-start text-left font-normal">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {format(dateRange.to, "PPP")}
+              ) : datePreset !== "all-time" ? (
+                <Button variant="outline" onClick={() => setDatePreset("all-time")}>
+                  Show all time
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.to}
-                  onSelect={(date) => date && setDateRange({ ...dateRange, to: date })}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Key Metrics */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          icon={Wallet}
-          label="Total Spent"
-          value={`₹${totalExpenses.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
-          sub={`${expenses.length} expense${expenses.length === 1 ? "" : "s"}`}
-          tint="primary"
-        />
-        <StatCard
-          icon={CalendarDays}
-          label="Per Day"
-          value={`₹${avgPerDay.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
-          sub={`Over ${daysDiff} day${daysDiff === 1 ? "" : "s"}`}
-          tint="amber"
-        />
-        <StatCard
-          icon={UsersIcon}
-          label="Per Person"
-          value={`₹${avgPerPerson.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
-          sub={`${flatmates.length} ${flatmates.length === 1 ? "person" : "people"}`}
-          tint="accent"
-        />
-        <FairnessCard score={fairnessScore} />
-      </div>
-
-      {/* Expense Trend Graph */}
-      <Card className="overflow-hidden">
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
-                Expense Trends
-              </CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">
-                Spending over time
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Label htmlFor="period" className="text-xs text-muted-foreground">
-                View:
-              </Label>
-              <Select
-                value={graphPeriod}
-                onValueChange={(value: "day" | "week" | "month") => setGraphPeriod(value)}
-              >
-                <SelectTrigger id="period" className="w-28 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="day">Daily</SelectItem>
-                  <SelectItem value="week">Weekly</SelectItem>
-                  <SelectItem value="month">Monthly</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <ExpenseTrendGraph
-            expenses={expenses.map((exp) => ({
-              date: exp.date,
-              amount: exp.amount,
-            }))}
-            period={graphPeriod}
+              ) : undefined
+            }
           />
-        </CardContent>
-      </Card>
-
-      {/* Category Breakdown */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-primary" />
-            Category Breakdown
-          </CardTitle>
-          <p className="text-xs text-muted-foreground mt-1">
-            Where the money's going
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {categoryTotals
-              .filter((cat) => cat.total > 0)
-              .sort((a, b) => b.total - a.total)
-              .map((cat, idx) => (
-                <CategoryBar
-                  key={cat.id}
-                  name={cat.name}
-                  total={cat.total}
-                  percentage={cat.percentage}
-                  count={cat.count}
-                  rank={idx}
-                />
-              ))}
-            {categoryTotals.filter((c) => c.total > 0).length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-6">
-                No category data for the selected range.
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Top Days */}
-      {topDays.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Flame className="w-5 h-5 text-primary" />
-              Top 5 Most Expensive Days
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              The days that drained the wallet
-            </p>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {topDays.map((day, idx) => (
-                <div
-                  key={day.date}
-                  className={cn(
-                    "flex items-center justify-between p-3 rounded-lg border transition-colors",
-                    idx === 0
-                      ? "bg-primary/5 border-primary/30"
-                      : "bg-secondary/40 border-border"
-                  )}
+        </Panel>
+      ) : (
+        <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-5">
+          <Section title="Spending over time" className="lg:col-span-5">
+            <Panel>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  {trendPeriod === "day" ? "Per day" : trendPeriod === "week" ? "Per week, from Sunday" : "Per month"}
+                </p>
+                <ToggleGroup
+                  type="single"
+                  value={trendPeriod}
+                  onValueChange={(value) => value && setTrendPeriod(value as TrendPeriod)}
+                  aria-label="Group spending by"
+                  className="gap-0.5 rounded-lg border bg-background p-0.5"
                 >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={cn(
-                        "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0",
-                        idx === 0
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-secondary text-foreground"
-                      )}
+                  {TREND_PERIODS.map((p) => (
+                    <ToggleGroupItem
+                      key={p.value}
+                      value={p.value}
+                      className="h-10 rounded-md px-3 text-[13px] hover:bg-secondary hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm"
                     >
-                      {idx + 1}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-sm sm:text-base">
-                        {format(new Date(day.date), "EEE, MMM d, yyyy")}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {day.count} expense{day.count !== 1 ? "s" : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className="text-base sm:text-lg font-bold">
-                      ₹{day.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                      {p.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+              <ExpenseTrendGraph expenses={filtered} period={trendPeriod} />
+            </Panel>
+          </Section>
+
+          <Section title="By category" className="lg:col-span-3">
+            <Panel>
+              <CategoryBars rows={byCategory} />
+            </Panel>
+          </Section>
+
+          <Section title="Biggest days" className="lg:col-span-2">
+            <Panel>
+              <BiggestDays days={topDays} />
+            </Panel>
+          </Section>
+        </div>
       )}
-    </div>
+
+      <FiltersPanel
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        people={people}
+        categories={categories}
+        peopleFilters={peopleFilters}
+        categoryFilters={categoryFilters}
+        onPeopleFiltersChange={setPeopleFilters}
+        onCategoryFiltersChange={setCategoryFilters}
+        onClear={resetFilters}
+        matchCount={filtered.length}
+        description="Choose which expenses these insights count. Settle up uses the same filters."
+      />
+    </InsightsPage>
   );
 }
 
-// ---- Sub-components for visual stat cards ----
-
-const TINT_CLASSES: Record<string, string> = {
-  primary: "bg-primary/10 text-primary",
-  accent: "bg-accent/10 text-accent",
-  amber: "bg-amber-500/10 text-amber-700",
+/**
+ * Days to average over: the whole period, except that a period still running
+ * (e.g. "This month") only counts the days up to today, or up to its latest
+ * expense if one is dated later.
+ */
+const perDaySpan = (range: DateRange, inPeriod: { date: string }[]) => {
+  const today = startOfDay(new Date());
+  let end = range.to;
+  if (end > today) {
+    const latest = inPeriod.reduce<string | null>((max, e) => (max === null || e.date > max ? e.date : max), null);
+    const elapsed = maxDate([today, latest ? parseDay(latest) : today]);
+    // A period that hasn't started yet keeps its full length.
+    if (elapsed >= startOfDay(range.from)) end = minDate([range.to, elapsed]);
+  }
+  const fullDays = differenceInCalendarDays(range.to, range.from) + 1;
+  const days = Math.max(1, differenceInCalendarDays(end, range.from) + 1);
+  return { days, soFar: days < fullDays };
 };
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  tint = "primary",
-}: {
-  icon: typeof Wallet;
-  label: string;
-  value: string;
-  sub: string;
-  tint?: "primary" | "accent" | "amber";
-}) {
+// One hue, stepping down in strength as categories get smaller.
+const BAR_TONES = ["bg-primary", "bg-primary/80", "bg-primary/65", "bg-primary/50"];
+const barTone = (rank: number, uncategorised: boolean) =>
+  uncategorised ? "bg-muted-foreground/40" : BAR_TONES[Math.min(rank, BAR_TONES.length - 1)];
+
+const CategoryBars = ({ rows }: { rows: CategoryTotal[] }) => {
+  let rank = 0;
   return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {label}
-            </p>
-            <p className="text-xl sm:text-2xl font-bold mt-2 truncate">{value}</p>
-            <p className="text-xs text-muted-foreground mt-1">{sub}</p>
-          </div>
-          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", TINT_CLASSES[tint])}>
-            <Icon className="w-4 h-4" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function FairnessCard({ score }: { score: number }) {
-  const pct = Math.max(0, Math.min(100, score));
-  const tone =
-    pct >= 75
-      ? { ring: "stroke-accent", label: "Fair", labelClass: "text-accent" }
-      : pct >= 50
-      ? { ring: "stroke-amber-500", label: "Uneven", labelClass: "text-amber-700" }
-      : { ring: "stroke-destructive", label: "Skewed", labelClass: "text-destructive" };
-
-  const r = 26;
-  const c = 2 * Math.PI * r;
-  const offset = c - (pct / 100) * c;
-
-  return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-center gap-3">
-          <div className="relative w-16 h-16 flex-shrink-0">
-            <svg className="w-16 h-16 -rotate-90" viewBox="0 0 64 64">
-              <circle cx="32" cy="32" r={r} className="stroke-secondary" strokeWidth="6" fill="none" />
-              <circle
-                cx="32"
-                cy="32"
-                r={r}
-                className={cn("transition-all", tone.ring)}
-                strokeWidth="6"
-                fill="none"
-                strokeDasharray={c}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-              />
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-sm font-bold">{pct.toFixed(0)}</span>
+    <ul className="divide-y divide-border/70">
+      {rows.map((row) => {
+        const tone = barTone(rank, row.uncategorised);
+        if (!row.uncategorised) rank += 1;
+        return (
+          <li key={row.id} className="py-3 first:pt-0 last:pb-0">
+            <div className="flex items-baseline justify-between gap-3">
+              <span
+                className={cn(
+                  "min-w-0 truncate text-[15px] font-medium",
+                  row.uncategorised && "text-muted-foreground"
+                )}
+              >
+                {row.name}
+              </span>
+              <span className="shrink-0 text-[15px] font-semibold tabular-nums">{formatMoneyCompact(row.total)}</span>
             </div>
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Fairness
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
+              <div
+                className={cn("h-full rounded-full", tone)}
+                style={{ width: `${Math.max(row.percentage, row.total > 0 ? 1 : 0)}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-[13px] tabular-nums text-muted-foreground">
+              {formatPercent(row.percentage)} · {pluralize(row.count, "expense")}
             </p>
-            <p className={cn("text-base font-bold mt-1", tone.labelClass)}>{tone.label}</p>
-            <p className="text-xs text-muted-foreground">Out of 100</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+          </li>
+        );
+      })}
+    </ul>
   );
-}
+};
 
-const CATEGORY_PALETTE = [
-  "bg-primary",
-  "bg-accent",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-sky-600",
-  "bg-violet-500",
-  "bg-emerald-600",
-  "bg-orange-500",
-];
+const describeTitles = (titles: string[]) => {
+  if (titles.length <= 2) return titles.join(", ");
+  return `${titles.slice(0, 2).join(", ")} +${titles.length - 2} more`;
+};
 
-function CategoryBar({
-  name,
-  total,
-  percentage,
-  count,
-  rank,
-}: {
-  name: string;
-  total: number;
-  percentage: number;
-  count: number;
-  rank: number;
-}) {
-  const barColor = CATEGORY_PALETTE[rank % CATEGORY_PALETTE.length];
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={cn("w-2 h-2 rounded-full flex-shrink-0", barColor)} />
-          <span className="font-medium text-sm truncate">{name}</span>
+const BiggestDays = ({ days }: { days: DayTotal[] }) => (
+  <ol className="divide-y divide-border/70">
+    {days.map((day, index) => (
+      <li key={day.date} className="flex min-h-14 items-center gap-3 py-3 first:pt-0 last:pb-0">
+        <span
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums",
+            index === 0 ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground"
+          )}
+          aria-hidden="true"
+        >
+          {index + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-medium">{formatDay(day.date, "EEE, d MMM yyyy")}</p>
+          <p className="truncate text-[13px] text-muted-foreground">
+            {pluralize(day.count, "expense")} · {describeTitles(day.titles)}
+          </p>
         </div>
-        <span className="font-semibold text-sm tabular-nums">
-          ₹{total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-        </span>
-      </div>
-      <div className="w-full bg-secondary/80 rounded-full h-2 overflow-hidden">
-        <div
-          className={cn("h-2 rounded-full transition-all", barColor)}
-          style={{ width: `${Math.min(percentage, 100)}%` }}
-        />
-      </div>
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>{percentage.toFixed(1)}%</span>
-        <span>
-          {count} expense{count !== 1 ? "s" : ""}
-        </span>
-      </div>
-    </div>
-  );
-}
-
+        <span className="shrink-0 text-[15px] font-semibold tabular-nums">{formatMoneyCompact(day.total)}</span>
+      </li>
+    ))}
+  </ol>
+);

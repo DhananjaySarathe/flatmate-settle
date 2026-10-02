@@ -1,9 +1,5 @@
-import { useMemo, useState } from "react";
-import { format } from "date-fns";
-import { ArrowRight, Receipt, User, Wallet } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { useId, useMemo, useState } from "react";
+import { isValid } from "date-fns";
 import {
   Select,
   SelectContent,
@@ -11,17 +7,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Panel } from "@/components/common/PageHeader";
+import { Chip } from "@/components/common/Chip";
+import { PersonAvatar } from "@/components/common/PersonAvatar";
+import { EmptyState } from "@/components/common/EmptyState";
+import { Amount } from "@/components/common/Amount";
+import { balanceStatus, formatDay, formatMoney, parseDay, pluralize } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { ReportSnapshot, Settlement } from "@/lib/settlement";
 
 interface Props {
   snapshot: ReportSnapshot;
+  /** Optional controlled selection, so the page can open this tab on a person. */
+  selected?: string | null;
+  onSelectedChange?: (name: string) => void;
 }
-
-const formatINR = (n: number) =>
-  `₹${n.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
 
 interface PersonExpenseRow {
   date: string;
@@ -42,6 +42,7 @@ interface PersonView {
   receivesFrom: Settlement[];
 }
 
+/** Everything here comes from the stored snapshot; nothing is re-fetched. */
 const buildPersonView = (
   name: string,
   snapshot: ReportSnapshot
@@ -79,12 +80,33 @@ const buildPersonView = (
   };
 };
 
-export default function SharedMyCost({ snapshot }: Props) {
+/** Show at most this many names as pills; beyond that a dropdown is easier to scan. */
+const MAX_PILLS = 8;
+
+/** A stored amount that isn't a usable number shows a dash, never "₹NaN". */
+const money = (value: number): string => (Number.isFinite(value) ? formatMoney(value) : "—");
+
+const dayHeading = (value: string) => {
+  const day = parseDay(value);
+  return isValid(day) ? formatDay(day, "EEE, d MMM yyyy") : value;
+};
+
+export default function SharedMyCost({ snapshot, selected: controlled, onSelectedChange }: Props) {
+  // The snapshot identifies people by name, so a repeated name is one choice.
   const names = useMemo(
-    () => snapshot.balances.map((b) => b.name),
+    () => Array.from(new Set(snapshot.balances.map((b) => b.name))),
     [snapshot.balances]
   );
-  const [selected, setSelected] = useState<string | null>(null);
+  const uid = useId();
+  const pickerLabelId = `${uid}-picker-label`;
+  const pickerTriggerId = `${uid}-picker-trigger`;
+  const expensesHeadingId = `${uid}-expenses-heading`;
+  const [uncontrolled, setUncontrolled] = useState<string | null>(null);
+  const selected = controlled !== undefined ? controlled : uncontrolled;
+  const select = (name: string) => {
+    if (controlled === undefined) setUncontrolled(name);
+    onSelectedChange?.(name);
+  };
 
   const view = useMemo(
     () => (selected ? buildPersonView(selected, snapshot) : null),
@@ -104,292 +126,226 @@ export default function SharedMyCost({ snapshot }: Props) {
       .map(([date, rows]) => ({ date, rows }));
   }, [view]);
 
-  const usePills = names.length > 0 && names.length <= 6;
-  const owes = view ? view.net < -0.01 : false;
-  const isOwed = view ? view.net > 0.01 : false;
+  if (names.length === 0) {
+    return (
+      <Panel>
+        <EmptyState
+          compact
+          title="Nobody in this snapshot"
+          description="There are no people to show a share for."
+        />
+      </Panel>
+    );
+  }
+
+  const usePills = names.length <= MAX_PILLS;
+  // null only when the stored amounts don't add up to a number.
+  const status = view && Number.isFinite(view.net) ? balanceStatus(view.net) : null;
+  const statusText =
+    status === "settled"
+      ? "You're settled up"
+      : status === "gets-back"
+        ? "You get back"
+        : status === "owes"
+          ? "You owe"
+          : null;
+  // Always mounted, so picking the first name is announced as well as later ones.
+  const announcement =
+    view && selected && statusText
+      ? `${selected}: ${statusText}${status === "settled" ? "" : ` ${money(Math.abs(view.net))}`}`
+      : "";
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-          <User className="w-4 h-4 sm:w-5 sm:h-5" />
-          My Cost
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            Pick your name to see what you owe and to whom.
-          </p>
-          {usePills ? (
-            <div className="flex flex-wrap gap-2">
-              {names.map((n) => (
-                <Button
-                  key={n}
-                  variant={selected === n ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelected(n)}
-                >
-                  {n}
-                </Button>
-              ))}
-            </div>
-          ) : (
-            <Select
-              value={selected ?? undefined}
-              onValueChange={(v) => setSelected(v)}
-            >
-              <SelectTrigger className="w-full sm:w-72">
-                <SelectValue placeholder="Select your name" />
-              </SelectTrigger>
-              <SelectContent>
-                {names.map((n) => (
-                  <SelectItem key={n} value={n}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-
-        {!view && (
-          <div className="rounded-md border border-dashed border-border/60 p-6 text-center text-sm text-muted-foreground">
-            Select a name above to see a personalised breakdown.
+    <div className="space-y-4">
+      <Panel>
+        <p id={pickerLabelId} className="text-sm text-muted-foreground">
+          Pick your name to see what you pay and to whom.
+        </p>
+        {usePills ? (
+          <div
+            role="group"
+            aria-labelledby={pickerLabelId}
+            className="mt-3 flex flex-wrap gap-2"
+          >
+            {names.map((n) => (
+              <Chip
+                key={n}
+                selected={selected === n}
+                leading={<PersonAvatar name={n} size="xs" />}
+                onClick={() => select(n)}
+              >
+                {n}
+              </Chip>
+            ))}
           </div>
+        ) : (
+          <Select value={selected ?? undefined} onValueChange={select}>
+            <SelectTrigger
+              id={pickerTriggerId}
+              className="mt-3 h-11 w-full sm:w-72"
+              // The prompt plus the trigger's own text, so the chosen name is read out too.
+              aria-labelledby={`${pickerLabelId} ${pickerTriggerId}`}
+            >
+              <SelectValue placeholder="Choose your name" />
+            </SelectTrigger>
+            <SelectContent>
+              {names.map((n) => (
+                <SelectItem key={n} value={n}>
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
+        <p className="sr-only" aria-live="polite">
+          {announcement}
+        </p>
+      </Panel>
 
-        {view && (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Card className="bg-secondary/30">
-                <CardContent className="p-4 space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    {isOwed ? "You are owed" : "Total you owe"}
-                  </p>
-                  <p
-                    className={
-                      "text-xl font-semibold " +
-                      (owes
-                        ? "text-red-600"
-                        : isOwed
-                        ? "text-green-600"
-                        : "")
-                    }
-                  >
-                    {formatINR(Math.abs(view.net))}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Share: {formatINR(view.totalShare)} · Paid:{" "}
-                    {formatINR(view.totalPaid)}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-secondary/30">
-                <CardContent className="p-4 space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Expenses included
-                  </p>
-                  <p className="text-xl font-semibold">
-                    {view.myExpenses.length}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    out of {snapshot.expenses.length} total
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-secondary/30">
-                <CardContent className="p-4 space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    {isOwed ? "Owed by" : owes ? "Pay to" : "Status"}
-                  </p>
-                  {owes ? (
-                    view.pays.length > 0 ? (
-                      <div className="space-y-1">
-                        {view.pays.map((s, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center justify-between gap-2 text-sm"
-                          >
-                            <span className="font-medium">{s.to}</span>
-                            <span className="font-semibold">
-                              {formatINR(s.amount)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No payee assigned
-                      </p>
-                    )
-                  ) : isOwed ? (
-                    view.receivesFrom.length > 0 ? (
-                      <div className="space-y-1">
-                        {view.receivesFrom.map((s, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center justify-between gap-2 text-sm"
-                          >
-                            <span className="font-medium">{s.from}</span>
-                            <span className="font-semibold">
-                              {formatINR(s.amount)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Nothing pending
-                      </p>
-                    )
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      All settled up
-                    </p>
+      {view && selected && (
+        <>
+          <Panel>
+            <div>
+              <p className="break-words text-sm font-medium text-muted-foreground">{selected}</p>
+              {status === "settled" ? (
+                <p className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">{statusText}</p>
+              ) : status !== null ? (
+                <p
+                  className={cn(
+                    "mt-1 text-xl font-semibold tracking-tight sm:text-2xl",
+                    status === "gets-back" ? "text-credit" : "text-debit"
                   )}
-                </CardContent>
-              </Card>
+                >
+                  {statusText}{" "}
+                  <span className="whitespace-nowrap tabular-nums">{money(Math.abs(view.net))}</span>
+                </p>
+              ) : null}
             </div>
 
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Receipt className="w-4 h-4 text-muted-foreground" />
-                <p className="text-sm font-medium">
-                  Your expenses ({view.myExpenses.length})
-                </p>
+            {view.pays.length > 0 || view.receivesFrom.length > 0 ? (
+              <ul className="mt-4 divide-y divide-border/70 border-t">
+                {view.pays.map((s, i) => (
+                  <li key={`pay-${s.to}-${i}`} className="flex items-center gap-3 py-3">
+                    <PersonAvatar name={s.to} size="sm" />
+                    <p className="min-w-0 flex-1 break-words text-sm">
+                      <span className="text-muted-foreground">Pay</span>{" "}
+                      <span className="font-semibold">{s.to}</span>
+                    </p>
+                    <Amount value={s.amount} tone="debit" className="text-base font-semibold" />
+                  </li>
+                ))}
+                {view.receivesFrom.map((s, i) => (
+                  <li key={`get-${s.from}-${i}`} className="flex items-center gap-3 py-3">
+                    <PersonAvatar name={s.from} size="sm" />
+                    <p className="min-w-0 flex-1 break-words text-sm">
+                      <span className="text-muted-foreground">Get back from</span>{" "}
+                      <span className="font-semibold">{s.from}</span>
+                    </p>
+                    <Amount value={s.amount} tone="credit" className="text-base font-semibold" />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                {status === "settled"
+                  ? "Nothing to pay or collect in this snapshot."
+                  : "No payment is assigned to you in this snapshot."}
+              </p>
+            )}
+
+            <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 rounded-lg bg-secondary/60 px-4 py-3 sm:grid-cols-3">
+              <div className="flex items-baseline justify-between gap-3 sm:block">
+                <dt className="text-xs font-medium text-muted-foreground">You paid</dt>
+                <dd className="text-sm font-semibold tabular-nums sm:mt-0.5 sm:text-base">
+                  {money(view.totalPaid)}
+                </dd>
               </div>
-              {view.myExpenses.length === 0 ? (
-                <p className="text-sm text-muted-foreground p-4 border rounded-md">
-                  {selected} wasn't included in any expense in this period.
-                </p>
-              ) : (
-                <div className="rounded-md border divide-y">
-                  {groupedByDate.map((g) => (
-                    <div key={g.date} className="p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                        {format(new Date(g.date), "EEE, MMM d, yyyy")}
-                      </p>
-                      <ul className="space-y-2">
-                        {g.rows.map((r, i) => (
-                          <li
-                            key={i}
-                            className="flex items-start justify-between gap-3"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium truncate">
+              <div className="flex items-baseline justify-between gap-3 sm:block">
+                <dt className="text-xs font-medium text-muted-foreground">Your share</dt>
+                <dd className="text-sm font-semibold tabular-nums sm:mt-0.5 sm:text-base">
+                  {money(view.totalShare)}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 sm:block">
+                <dt className="text-xs font-medium text-muted-foreground">Net (paid − share)</dt>
+                <dd className="text-sm font-semibold sm:mt-0.5 sm:text-base">
+                  {Number.isFinite(view.net) ? <Amount value={view.net} tone="auto" signed /> : "—"}
+                </dd>
+              </div>
+            </dl>
+          </Panel>
+
+          <section aria-labelledby={expensesHeadingId} className="space-y-3">
+            <div>
+              <h2 id={expensesHeadingId} className="text-base font-semibold tracking-tight sm:text-lg">
+                Your expenses
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                In {view.myExpenses.length} of {pluralize(snapshot.expenses.length, "expense")} · your
+                share of each
+              </p>
+            </div>
+
+            {view.myExpenses.length === 0 ? (
+              <Panel>
+                <EmptyState
+                  compact
+                  title="Not in any expense"
+                  description={`${selected} wasn't included in any expense in this period.`}
+                />
+              </Panel>
+            ) : (
+              <div className="overflow-hidden rounded-xl border bg-card shadow-card">
+                {groupedByDate.map((g) => (
+                  <div key={g.date} className="border-b last:border-b-0">
+                    <h3 className="bg-secondary/50 px-4 py-2 text-xs font-semibold text-muted-foreground sm:px-5">
+                      {dayHeading(g.date)}
+                    </h3>
+                    <ul className="divide-y divide-border/70">
+                      {g.rows.map((r, i) => (
+                        <li key={`${r.title}-${i}`} className="flex items-start gap-3 px-4 py-3 sm:px-5">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                              <p className="min-w-0 break-words text-sm font-semibold sm:text-[15px]">
                                 {r.title}
                               </p>
-                              <p className="text-xs text-muted-foreground">
-                                paid by{" "}
-                                <span className="font-medium text-foreground/80">
-                                  {r.paidBy}
-                                </span>{" "}
-                                · split {r.splitCount}{" "}
-                                {r.splitCount === 1 ? "way" : "ways"}
-                                {r.category ? (
-                                  <>
-                                    {" "}
-                                    ·{" "}
-                                    <Badge
-                                      variant="secondary"
-                                      className="ml-1 text-[10px] py-0 px-1.5"
-                                    >
-                                      {r.category}
-                                    </Badge>
-                                  </>
-                                ) : null}
-                              </p>
+                              {r.category && (
+                                <span className="max-w-full truncate rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                  {r.category}
+                                </span>
+                              )}
                             </div>
-                            <div className="text-right shrink-0">
-                              <p className="text-sm font-semibold">
-                                {formatINR(r.yourShare)}
-                              </p>
-                              <p className="text-[11px] text-muted-foreground">
-                                of {formatINR(r.amount)}
-                              </p>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                  <div className="p-3 flex items-center justify-between bg-secondary/30">
-                    <p className="text-sm font-semibold">Total of your shares</p>
-                    <p className="text-sm font-semibold">
-                      {formatINR(view.totalShare)}
-                    </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground sm:text-sm">
+                              Paid by{" "}
+                              <span className="font-medium text-foreground/80">{r.paidBy}</span>
+                              {" · "}split {r.splitCount} {r.splitCount === 1 ? "way" : "ways"}
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className="text-sm font-semibold tabular-nums sm:text-[15px]">
+                              <span className="sr-only">Your share </span>
+                              {money(r.yourShare)}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                              of {money(r.amount)}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                </div>
-              )}
-            </div>
-
-            {owes && view.pays.length > 0 && (
-              <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Wallet className="w-4 h-4 text-red-600" />
-                  <p className="text-sm font-semibold text-red-700 dark:text-red-400">
-                    Settlement
+                ))}
+                <div className="flex items-center justify-between gap-3 bg-secondary/50 px-4 py-3 sm:px-5">
+                  <p className="text-sm font-semibold">Total of your shares</p>
+                  <p className="text-sm font-semibold tabular-nums sm:text-[15px]">
+                    {money(view.totalShare)}
                   </p>
                 </div>
-                <ul className="space-y-2">
-                  {view.pays.map((s, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium">{s.from}</span>
-                        <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="font-medium">{s.to}</span>
-                      </div>
-                      <span className="text-sm font-semibold">
-                        {formatINR(s.amount)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
-
-            {isOwed && view.receivesFrom.length > 0 && (
-              <div className="rounded-md border border-green-500/30 bg-green-500/10 p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Wallet className="w-4 h-4 text-green-600" />
-                  <p className="text-sm font-semibold text-green-700 dark:text-green-400">
-                    Money coming your way
-                  </p>
-                </div>
-                <ul className="space-y-2">
-                  {view.receivesFrom.map((s, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium">{s.from}</span>
-                        <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="font-medium">{s.to}</span>
-                      </div>
-                      <span className="text-sm font-semibold">
-                        {formatINR(s.amount)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {!owes && !isOwed && (
-              <div className="rounded-md border border-border/60 bg-secondary/30 p-4 text-sm text-muted-foreground">
-                {selected} is all settled up — no transactions needed.
-              </div>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+          </section>
+        </>
+      )}
+    </div>
   );
 }

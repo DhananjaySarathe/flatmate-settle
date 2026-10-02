@@ -2,14 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
 All colors MUST be HSL.
 */
 
 @layer base {
   :root {
-    /* Warm & Friendly — cream background, terracotta primary, sage accent.
-       Inspired by Notion / Things / Bear. */
+    /* Warm & friendly: cream background, terracotta primary, sage for money coming back.
+       The same palette drives the PDF exports (src/lib/pdfStyle.ts). */
     --background: 35 35% 96%;
     --foreground: 24 10% 10%;
 
@@ -21,16 +21,16 @@ All colors MUST be HSL.
 
     --primary: 18 75% 40%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 18 75% 55%;
 
     --secondary: 35 25% 92%;
     --secondary-foreground: 24 10% 10%;
 
     --muted: 35 20% 92%;
-    --muted-foreground: 25 5% 45%;
+    --muted-foreground: 25 6% 40%;
 
-    --accent: 84 50% 35%;
-    --accent-foreground: 0 0% 100%;
+    /* shadcn's "accent" is a subtle interactive surface. Sage lives in --success / --credit. */
+    --accent: 35 25% 92%;
+    --accent-foreground: 24 10% 10%;
 
     --destructive: 0 70% 45%;
     --destructive-foreground: 0 0% 100%;
@@ -38,32 +38,51 @@ All colors MUST be HSL.
     --success: 84 50% 35%;
     --success-foreground: 0 0% 100%;
 
+    /* Money direction. Credit = gets money back, debit = owes money. */
+    --credit: 84 52% 30%;
+    --credit-soft: 84 40% 93%;
+    --debit: 2 62% 44%;
+    --debit-soft: 4 70% 95%;
+
     --border: 35 15% 85%;
-    --input: 35 15% 85%;
+    --input: 35 15% 82%;
     --ring: 18 75% 40%;
 
     --radius: 0.75rem;
 
-    --gradient-primary: linear-gradient(135deg, hsl(18 75% 40%), hsl(35 80% 50%));
-    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(35 35% 96%));
-    --gradient-shine: linear-gradient(110deg, transparent 25%, hsl(18 75% 55% / 0.18) 50%, transparent 75%);
+    --shadow-card: 0 1px 2px hsl(24 20% 30% / 0.06), 0 2px 8px hsl(24 20% 30% / 0.05);
+    --shadow-raised: 0 2px 4px hsl(24 20% 30% / 0.06), 0 12px 32px -8px hsl(24 20% 30% / 0.18);
 
-    --shadow-card: 0 2px 6px hsl(20 10% 75% / 0.35);
-    --shadow-glow: 0 4px 14px hsl(18 75% 40% / 0.18);
+    /* Height of the mobile tab bar, used to keep content and toasts clear of it. */
+    --tabbar-height: 4rem;
+
+    color-scheme: light;
   }
 }
 
 @layer utilities {
-  .glass-card {
-    @apply bg-card/50 backdrop-blur-xl border border-border/50;
+  .shadow-card {
+    box-shadow: var(--shadow-card);
   }
-  
-  .gradient-text {
-    @apply bg-gradient-to-r from-primary to-amber-500 bg-clip-text text-transparent;
+
+  .shadow-raised {
+    box-shadow: var(--shadow-raised);
   }
-  
-  .hover-lift {
-    @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-lg;
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Keep page content clear of the fixed mobile tab bar. */
+  .pb-tabbar {
+    padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom) + 1.5rem);
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -72,9 +91,49 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+    color: hsl(var(--foreground));
+  }
+
+  input,
+  textarea {
+    caret-color: hsl(var(--primary));
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Radix/shadcn controls draw their own ring; avoid a double outline. */
+  [class*="focus-visible:ring"]:focus-visible {
+    outline: none;
+  }
+
+  a {
+    text-underline-offset: 3px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
-

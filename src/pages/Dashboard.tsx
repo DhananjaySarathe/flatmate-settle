@@ -1,363 +1,533 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { AlertTriangle, ArrowRight, Copy, Loader2, Plus, Receipt, Users, X } from "lucide-react";
 import { toast } from "sonner";
-import { Plus, Users, Trash2, Edit, Loader2 } from "lucide-react";
-import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader, Panel, Section } from "@/components/common/PageHeader";
+import { SettlementPlan } from "@/components/common/SettlementPlan";
+import { BalanceList } from "@/components/common/BalanceList";
+import { EmptyState } from "@/components/common/EmptyState";
+import { ErrorState } from "@/components/common/ErrorState";
+import { PersonAvatar } from "@/components/common/PersonAvatar";
+import { ExpenseRow } from "@/components/expenses/ExpenseRow";
+import { PersonFormDialog } from "@/components/people/PersonFormDialog";
+import { PersonSheet } from "@/components/people/PersonSheet";
+import { MarkSettledDialog } from "@/components/settle/MarkSettledDialog";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
+import { useExpenseComposer } from "@/contexts/ExpenseComposerContext";
+import { useRefreshSpace, useSpaceData, type Person } from "@/hooks/useSpaceData";
+import { useSettleView } from "@/hooks/useSettleView";
+import { buildSettlementSummaryText } from "@/lib/reportText";
+import { copyText } from "@/lib/clipboard";
+import { createPerson } from "@/lib/mutations";
+import { errorMessage } from "@/lib/db";
+import { formatDay, formatMoney, pluralize } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-interface Flatmate {
-  id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-}
+const nameClash = (names: string[], candidate: string, except?: string) =>
+  names.some((n) => n !== except && n.trim().toLowerCase() === candidate.trim().toLowerCase());
 
 const Dashboard = () => {
-  const { selectedSplitSpace } = useSplitSpace();
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingFlatmate, setEditingFlatmate] = useState<Flatmate | null>(null);
-  const [formData, setFormData] = useState({ name: "", email: "", phone: "" });
-  const [submitLoading, setSubmitLoading] = useState(false);
-  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const {
+    selectedSplitSpace,
+    splitSpaces,
+    loading: spacesLoading,
+    error: spacesError,
+    refreshSplitSpaces,
+  } = useSplitSpace();
+  const spaceId = selectedSplitSpace?.id;
+  const { people, expenses, settlements, isLoading, error, refetch } = useSpaceData(spaceId);
+  const { openNew, openDetail } = useExpenseComposer();
+  const location = useLocation();
+  const navigate = useNavigate();
 
+  const [editingPerson, setEditingPerson] = useState<Person | null>(null);
+  const [sheetPersonId, setSheetPersonId] = useState<string | null>(null);
+  const [markOpen, setMarkOpen] = useState(false);
+  const [addingPerson, setAddingPerson] = useState(false);
+
+  // "Add people" elsewhere in the app lands here with the add field open.
   useEffect(() => {
-    fetchFlatmates();
-  }, [selectedSplitSpace]);
-
-  const fetchFlatmates = async () => {
-    try {
-      let query = supabase
-        .from("flatmates")
-        .select("*")
-        .order("created_at", { ascending: true });
-
-      // If split_space_id column exists and we have a selected space, filter by it
-      if (selectedSplitSpace) {
-        try {
-          const { data, error } = await query
-            .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`);
-          if (error) throw error;
-          setFlatmates(data || []);
-        } catch (filterError: any) {
-          // If filter fails (column doesn't exist), try without filter
-          if (filterError.message?.includes("column") || filterError.code === "42703") {
-            const { data, error } = await supabase
-              .from("flatmates")
-              .select("*")
-              .order("created_at", { ascending: true });
-            if (error) throw error;
-            setFlatmates(data || []);
-          } else {
-            throw filterError;
-          }
-        }
-      } else {
-        // No split space selected, fetch all
-        const { data, error } = await query;
-        if (error) throw error;
-        setFlatmates(data || []);
-      }
-    } catch (error: any) {
-      toast.error("Error fetching flatmates");
-      console.error(error);
-    } finally {
-      setLoading(false);
+    if ((location.state as { addPerson?: boolean } | null)?.addPerson) {
+      setAddingPerson(true);
+      navigate(location.pathname, { replace: true, state: null });
     }
-  };
+  }, [location.state, location.pathname, navigate]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Home always shows the open period: everything after the last settle-up, unfiltered.
+  const view = useSettleView({ people, expenses, settlements, preset: "since-settlement" });
+  const { balances, plan, lastSettled, openPeriodLabel } = view;
 
-    if (!formData.name) {
-      toast.error("Name is required");
-      return;
+  const nameOf = useMemo(() => {
+    const map = new Map(people.map((p) => [p.id, p.name]));
+    return (id: string) => map.get(id) ?? "Someone";
+  }, [people]);
+
+  const duplicateName = useMemo(() => {
+    const seen = new Map<string, Person>();
+    for (const p of people) {
+      const key = p.name.trim().toLowerCase();
+      if (seen.has(key)) return p;
+      seen.set(key, p);
     }
+    return null;
+  }, [people]);
 
-    setSubmitLoading(true);
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
+  const recent = expenses.slice(0, 5);
+  const sheetPerson = people.find((p) => p.id === sheetPersonId) ?? null;
 
-      if (editingFlatmate) {
-        const { error } = await supabase
-          .from("flatmates")
-          .update({
-            name: formData.name,
-            email: formData.email || null,
-            phone: formData.phone || null,
-          })
-          .eq("id", editingFlatmate.id);
-
-        if (error) throw error;
-        toast.success("Flatmate updated successfully");
-      } else {
-        const flatmateDataToInsert: any = {
-          name: formData.name,
-          email: formData.email || null,
-          phone: formData.phone || null,
-          created_by: user.id,
-        };
-
-        // Only add split_space_id if it exists and is selected
-        if (selectedSplitSpace) {
-          flatmateDataToInsert.split_space_id = selectedSplitSpace.id;
-        }
-
-        const { error } = await supabase.from("flatmates").insert(flatmateDataToInsert);
-
-        if (error) throw error;
-        toast.success("Flatmate added successfully");
-      }
-
-      setDialogOpen(false);
-      setFormData({ name: "", email: "", phone: "" });
-      setEditingFlatmate(null);
-      fetchFlatmates();
-    } catch (error: any) {
-      toast.error(error.message);
-      console.error(error);
-    } finally {
-      setSubmitLoading(false);
-    }
+  const copySummary = async () => {
+    const ok = await copyText(
+      buildSettlementSummaryText({
+        spaceName: selectedSplitSpace?.name,
+        range: view.range,
+        people,
+        expenses: view.filtered,
+        balances,
+        settlements: plan,
+      })
+    );
+    if (ok) toast.success("Summary copied", { description: "Paste it into your group chat." });
+    else toast.error("Couldn't copy", { description: "Your browser blocked clipboard access." });
   };
 
-  const handleEdit = (flatmate: Flatmate) => {
-    setEditingFlatmate(flatmate);
-    setFormData({
-      name: flatmate.name,
-      email: flatmate.email || "",
-      phone: flatmate.phone || "",
-    });
-    setDialogOpen(true);
-  };
+  if (spacesLoading || (isLoading && !error)) return <HomeSkeleton />;
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this flatmate?")) return;
+  if (!selectedSplitSpace && spacesError) {
+    return <ErrorState title="Couldn't load your groups" description={spacesError} onRetry={() => refreshSplitSpaces()} />;
+  }
 
-    setDeleteLoading(id);
-    try {
-      const { error } = await supabase.from("flatmates").delete().eq("id", id);
-
-      if (error) throw error;
-      toast.success("Flatmate deleted");
-      fetchFlatmates();
-    } catch (error: any) {
-      toast.error(error.message);
-      console.error(error);
-    } finally {
-      setDeleteLoading(null);
-    }
-  };
-
-  const resetForm = () => {
-    setFormData({ name: "", email: "", phone: "" });
-    setEditingFlatmate(null);
-  };
-
-  // Allow page to work even without SplitSpace selected (for backward compatibility)
-
-  if (loading) {
+  if (!selectedSplitSpace) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <EmptyState
+        icon={Users}
+        title={splitSpaces.length === 0 ? "Create your first group" : "Choose a group"}
+        description="A group holds the people you share costs with, like your flat or a trip."
+        action={
+          <Button onClick={() => navigate("/split-spaces", { state: { create: true } })}>
+            <Plus /> New group
+          </Button>
+        }
+      />
+    );
+  }
+
+  if (error) {
+    return <ErrorState description={errorMessage(error, "Check your connection and try again.")} onRetry={() => refetch()} />;
+  }
+
+  const personSheets = (
+    <>
+      <PersonFormDialog
+        open={!!editingPerson}
+        onOpenChange={(open) => !open && setEditingPerson(null)}
+        spaceId={selectedSplitSpace.id}
+        spaceName={selectedSplitSpace.name}
+        person={editingPerson}
+        existingNames={people.map((p) => p.name)}
+      />
+      <PersonSheet
+        open={!!sheetPerson}
+        onOpenChange={(open) => !open && setSheetPersonId(null)}
+        spaceId={selectedSplitSpace.id}
+        spaceName={selectedSplitSpace.name}
+        person={sheetPerson}
+        balance={balances.find((b) => b.id === sheetPersonId) ?? null}
+        settlements={plan}
+        periodExpenses={view.filtered}
+        allExpenses={expenses}
+        periodLabel={openPeriodLabel}
+        nameOf={nameOf}
+        onEdit={(p) => {
+          setSheetPersonId(null);
+          setEditingPerson(p);
+        }}
+      />
+    </>
+  );
+
+  if (people.length === 0) {
+    return (
+      <div className="mx-auto max-w-xl">
+        <PageHeader title={selectedSplitSpace.name} description="Let's set up who's splitting costs here." />
+        <Panel className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Who's sharing costs in {selectedSplitSpace.name}?</h2>
+            <p className="text-sm text-muted-foreground">
+              Add everyone who splits bills here, including yourself. They don't need an account.
+            </p>
+          </div>
+          <QuickAddPeople spaceId={selectedSplitSpace.id} existingNames={[]} />
+        </Panel>
       </div>
     );
   }
 
+  const settledText =
+    view.filtered.length === 0
+      ? lastSettled
+        ? `Nothing new since your last settle-up on ${formatDay(lastSettled, "d MMM")}.`
+        : "Nobody owes anything right now."
+      : "Everyone's shares are covered for this period.";
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-2">Dashboard</h1>
-          <p className="text-muted-foreground text-sm sm:text-base">
-            Manage your flatmates and view expense overview
-          </p>
-          {selectedSplitSpace && (
-            <p className="text-sm text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
+    <div className="mx-auto max-w-5xl">
+      <PageHeader
+        title={selectedSplitSpace.name}
+        description={`${pluralize(people.length, "person", "people")} · ${pluralize(expenses.length, "expense")}`}
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start lg:gap-8">
+        <Panel className="lg:col-span-7">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold tracking-tight">Who pays whom</h2>
+              <p className="text-sm text-muted-foreground">
+                {openPeriodLabel}
+                {lastSettled ? " · after your last settle-up" : ""}
+                {view.filtered.length > 0 &&
+                  ` · ${pluralize(view.filtered.length, "expense")}, ${formatMoney(view.total)}`}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" asChild className="-mr-2 shrink-0 text-primary hover:text-primary">
+              <Link to="/reports">
+                Settle up <ArrowRight />
+              </Link>
+            </Button>
+          </div>
+
+          {expenses.length === 0 ? (
+            <EmptyState
+              compact
+              icon={Receipt}
+              title="No expenses yet"
+              description="Add the first one. An amount and a description is all it takes."
+              action={
+                <Button onClick={() => openNew()}>
+                  <Plus /> Add expense
+                </Button>
+              }
+            />
+          ) : (
+            <>
+              <SettlementPlan settlements={plan} limit={5} settledDescription={settledText} />
+              {plan.length > 0 ? (
+                <div className="mt-4 space-y-3 border-t pt-4">
+                  <p className="text-sm text-muted-foreground tabular-nums">
+                    {plan.length === 1 ? "1 payment settles everything" : `${plan.length} payments settle everything`} ·{" "}
+                    {formatMoney(view.transferTotal)} in total
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => setMarkOpen(true)}>
+                      Mark as settled
+                    </Button>
+                    <Button variant="ghost" onClick={copySummary}>
+                      <Copy /> Copy summary
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                view.filtered.length === 0 && (
+                  <div className="mt-4 flex justify-end">
+                    <Button variant="outline" onClick={() => openNew()}>
+                      <Plus /> Add expense
+                    </Button>
+                  </div>
+                )
+              )}
+            </>
+          )}
+        </Panel>
+
+        <Section
+          className="lg:col-span-5 lg:col-start-8 lg:row-span-2 lg:row-start-1"
+          title={`People · ${people.length}`}
+          description={`${openPeriodLabel}. Tap someone for their breakdown.`}
+          action={
+            !addingPerson && (
+              <Button variant="outline" size="sm" onClick={() => setAddingPerson(true)}>
+                <Plus /> Add person
+              </Button>
+            )
+          }
+        >
+          {duplicateName && (
+            <div className="flex items-start gap-3 rounded-lg border border-debit/25 bg-debit-soft px-4 py-3 text-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-debit" aria-hidden="true" />
+              <p className="min-w-0 flex-1">
+                Two people are called {duplicateName.name}. Rename one so payments aren't ambiguous.
+              </p>
+              <Button size="sm" variant="ghost" className="-my-1 h-8" onClick={() => setEditingPerson(duplicateName)}>
+                Rename
+              </Button>
+            </div>
+          )}
+          <Panel className="py-2 sm:py-2">
+            {addingPerson && (
+              <div className="border-b py-3">
+                <InlineAddPerson
+                  spaceId={selectedSplitSpace.id}
+                  existingNames={people.map((p) => p.name)}
+                  onClose={() => setAddingPerson(false)}
+                />
+              </div>
+            )}
+            <BalanceList balances={balances} onSelect={(b) => setSheetPersonId(b.id)} />
+            {people.length === 1 && (
+              <p className="border-t py-3 text-sm text-muted-foreground">Add one more person to start splitting.</p>
+            )}
+          </Panel>
+        </Section>
+
+        <Section
+          className="lg:col-span-7"
+          title="Recent expenses"
+          action={
+            expenses.length > 0 && (
+              <Button variant="ghost" size="sm" asChild className="-mr-2 text-primary hover:text-primary">
+                <Link to="/expenses">
+                  See all <ArrowRight />
+                </Link>
+              </Button>
+            )
+          }
+        >
+          {recent.length === 0 ? (
+            <Panel>
+              <p className="text-sm text-muted-foreground">Expenses you add will show up here.</p>
+            </Panel>
+          ) : (
+            <div className="overflow-hidden rounded-xl border bg-card shadow-card">
+              <ul className="divide-y">
+                {recent.map((expense) => (
+                  <li key={expense.id}>
+                    <ExpenseRow expense={expense} nameOf={nameOf} peopleCount={people.length} onOpen={openDetail} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {lastSettled && (
+            <p className="px-1 text-sm text-muted-foreground">
+              Expenses dated on or before {formatDay(lastSettled, "d MMM yyyy")} are covered by your last settle-up.{" "}
+              <Link to="/reports" className="font-medium text-primary underline-offset-4 hover:underline">
+                Pick another period on Settle up
+              </Link>
+              .
             </p>
           )}
-        </div>
-        <Dialog
-          open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button className="shadow-md shadow-primary/20 self-start sm:self-auto">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Flatmate
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {editingFlatmate ? "Edit Flatmate" : "Add New Flatmate"}
-              </DialogTitle>
-              <DialogDescription>
-                {editingFlatmate
-                  ? "Update flatmate information"
-                  : "Add a new flatmate to your group"}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name *</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData({ ...formData, email: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  value={formData.phone}
-                  onChange={(e) =>
-                    setFormData({ ...formData, phone: e.target.value })
-                  }
-                />
-              </div>
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={submitLoading}
-              >
-                {submitLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    {editingFlatmate ? "Updating..." : "Adding..."}
-                  </>
-                ) : editingFlatmate ? (
-                  "Update Flatmate"
-                ) : (
-                  "Add Flatmate"
-                )}
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+        </Section>
       </div>
 
-      <Card className="glass-card hover-lift">
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Users className="w-5 h-5 mr-2 text-primary" />
-            Flatmates ({flatmates.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {flatmates.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground mb-4">
-                No flatmates added yet
-              </p>
-              <Button
-                onClick={() => setDialogOpen(true)}
-                variant="outline"
-                className="border-primary/30 hover:bg-primary/10"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Your First Flatmate
-              </Button>
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {flatmates.map((flatmate, index) => (
-                <motion.div
-                  key={flatmate.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="min-w-0"
-                >
-                  <Card className="bg-secondary/50 border-border/50 hover:border-primary/30 transition-colors">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-lg mb-1 truncate">
-                            {flatmate.name}
-                          </h3>
-                          {flatmate.email && (
-                            <p className="text-sm text-muted-foreground truncate">
-                              {flatmate.email}
-                            </p>
-                          )}
-                          {flatmate.phone && (
-                            <p className="text-sm text-muted-foreground truncate">
-                              {flatmate.phone}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex space-x-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEdit(flatmate)}
-                            className="hover:bg-primary/10 hover:text-primary"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(flatmate.id)}
-                            className="hover:bg-destructive/10 hover:text-destructive"
-                            disabled={deleteLoading === flatmate.id}
-                          >
-                            {deleteLoading === flatmate.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <MarkSettledDialog
+        open={markOpen}
+        onOpenChange={setMarkOpen}
+        spaceId={selectedSplitSpace.id}
+        range={view.range}
+        settlements={plan}
+      />
+      {personSheets}
     </div>
   );
 };
+
+/** One-line "type a name, press Enter" add, kept open for adding several people in a row. */
+const InlineAddPerson = ({
+  spaceId,
+  existingNames,
+  onClose,
+  autoFocus = true,
+}: {
+  spaceId: string;
+  existingNames: string[];
+  onClose?: () => void;
+  autoFocus?: boolean;
+}) => {
+  const refreshSpace = useRefreshSpace();
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const add = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("Enter a name.");
+      inputRef.current?.focus();
+      return;
+    }
+    if (nameClash(existingNames, trimmed)) {
+      setError(`There's already someone called ${trimmed} in this group. Add an initial, like “${trimmed} S”.`);
+      inputRef.current?.focus();
+      return;
+    }
+    setSaving(true);
+    try {
+      await createPerson(spaceId, { name: trimmed, email: null, phone: null });
+      toast.success(`Added ${trimmed}`);
+      setName("");
+      setError(null);
+      await refreshSpace(spaceId);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't add them. Try again."));
+    } finally {
+      setSaving(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  return (
+    <form onSubmit={add} noValidate className="space-y-2">
+      <div className="flex gap-2">
+        <Input
+          ref={inputRef}
+          autoFocus={autoFocus}
+          value={name}
+          maxLength={60}
+          autoComplete="off"
+          enterKeyHint="done"
+          onChange={(e) => {
+            setName(e.target.value);
+            setError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && onClose) onClose();
+          }}
+          placeholder="Name, e.g. Priya"
+          aria-label="New person's name"
+          aria-invalid={!!error}
+          aria-describedby={error ? "add-person-error" : undefined}
+          className={cn("h-10", error && "border-debit")}
+        />
+        <Button type="submit" className="shrink-0" disabled={saving}>
+          {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+          Add
+        </Button>
+        {onClose && (
+          <Button type="button" variant="ghost" size="icon" className="shrink-0" onClick={onClose} aria-label="Stop adding people">
+            <X />
+          </Button>
+        )}
+      </div>
+      {error && (
+        <p id="add-person-error" className="text-sm text-debit">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+};
+
+/** First-run setup: add names one after another, then jump straight into the first expense. */
+const QuickAddPeople = ({ spaceId, existingNames }: { spaceId: string; existingNames: string[] }) => {
+  const refreshSpace = useRefreshSpace();
+  const { openNew } = useExpenseComposer();
+  const [name, setName] = useState("");
+  const [added, setAdded] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const add = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("Enter a name.");
+      return;
+    }
+    const taken = [...existingNames, ...added].find((n) => n.trim().toLowerCase() === trimmed.toLowerCase());
+    if (taken) {
+      setError(`${taken} is already here. Add an initial to tell them apart, like “${trimmed} S”.`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await createPerson(spaceId, { name: trimmed, email: null, phone: null });
+      setAdded((prev) => [...prev, trimmed]);
+      setName("");
+      setError(null);
+      // The page refreshes on "Done", so this form stays put while names are added.
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't add them. Try again."));
+    } finally {
+      setSaving(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <form onSubmit={add} className="flex gap-2" noValidate>
+        <Input
+          ref={inputRef}
+          autoFocus
+          value={name}
+          maxLength={60}
+          autoComplete="off"
+          enterKeyHint="done"
+          onChange={(e) => {
+            setName(e.target.value);
+            setError(null);
+          }}
+          placeholder="Name, e.g. Priya"
+          aria-label="Person's name"
+          aria-invalid={!!error}
+          className="h-11"
+        />
+        <Button type="submit" className="h-11 shrink-0" disabled={saving}>
+          {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+          Add
+        </Button>
+      </form>
+      {error && <p className="text-sm text-debit">{error}</p>}
+      {added.length > 0 && (
+        <ul className="flex flex-wrap gap-2" aria-label="Added so far">
+          {added.map((n) => (
+            <li key={n} className="inline-flex items-center gap-2 rounded-full bg-secondary py-1 pl-1 pr-3 text-sm font-medium">
+              <PersonAvatar name={n} size="xs" /> {n}
+            </li>
+          ))}
+        </ul>
+      )}
+      {added.length === 1 && (
+        <p className="text-sm text-muted-foreground">Add one more person to start splitting.</p>
+      )}
+      {added.length >= 1 && (
+        <Button
+          variant={added.length >= 2 ? "default" : "outline"}
+          onClick={async () => {
+            await refreshSpace(spaceId);
+            if (added.length >= 2) openNew();
+          }}
+        >
+          {added.length >= 2 ? (
+            <>
+              Add your first expense <ArrowRight />
+            </>
+          ) : (
+            "Done for now"
+          )}
+        </Button>
+      )}
+    </div>
+  );
+};
+
+const HomeSkeleton = () => (
+  <div className="mx-auto max-w-5xl" aria-busy="true" aria-label="Loading">
+    <Skeleton className="mb-2 h-8 w-48" />
+    <Skeleton className="mb-8 h-4 w-32" />
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:gap-8">
+      <div className="space-y-6 lg:col-span-7">
+        <Skeleton className="h-64 rounded-xl" />
+        <Skeleton className="h-56 rounded-xl" />
+      </div>
+      <Skeleton className="h-80 rounded-xl lg:col-span-5" />
+    </div>
+  </div>
+);
 
 export default Dashboard;

@@ -1,767 +1,282 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { toast } from "sonner";
-import {
-  Plus,
-  Receipt,
-  Trash2,
-  Edit,
-  Loader2,
-  Calendar as CalendarIcon,
-} from "lucide-react";
-import { motion } from "framer-motion";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { format } from "date-fns";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Receipt, Search, Users, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PageHeader } from "@/components/common/PageHeader";
+import { EmptyState } from "@/components/common/EmptyState";
+import { ErrorState } from "@/components/common/ErrorState";
+import { ExpenseRow } from "@/components/expenses/ExpenseRow";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
-import { CategorySelector } from "@/components/CategorySelector";
-import { Badge } from "@/components/ui/badge";
+import { useExpenseComposer } from "@/contexts/ExpenseComposerContext";
+import { useSpaceData, type SpaceExpense } from "@/hooks/useSpaceData";
+import { errorMessage } from "@/lib/db";
+import { formatMoney, parseDay, pluralize } from "@/lib/format";
 
-interface Flatmate {
-  id: string;
-  name: string;
-}
+const PAGE = 60;
+const ALL = "all";
 
-interface Expense {
-  id: string;
-  title: string;
-  amount: number;
-  date: string;
-  paid_by: string;
-  category_id?: string;
-  categories?: {
-    name: string;
-  };
-  flatmates: {
-    name: string;
-  };
-  expense_splits: {
-    flatmate_id: string;
-  }[];
+interface MonthGroup {
+  key: string;
+  label: string;
+  total: number;
+  expenses: SpaceExpense[];
 }
 
 const Expenses = () => {
-  const { selectedSplitSpace, splitSpaces, loading: contextLoading } = useSplitSpace();
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
-  const [formData, setFormData] = useState({
-    title: "",
-    amount: "",
-    date: new Date(),
-    paidBy: "",
-    splitBetween: [] as string[],
-    categoryId: "",
-  });
-  const [submitLoading, setSubmitLoading] = useState(false);
-  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const { selectedSplitSpace, loading: spacesLoading } = useSplitSpace();
+  const { people, expenses, categories, isLoading, error, refetch } = useSpaceData(selectedSplitSpace?.id);
+  const { openNew, openDetail } = useExpenseComposer();
 
-  const fetchDataWithoutSplitSpace = async () => {
-    setLoading(true);
-    try {
-      const [flatmatesRes, expensesRes] = await Promise.all([
-        supabase.from("flatmates").select("id, name").order("name"),
-        supabase
-          .from("expenses")
-          .select(
-            `
-            *,
-            flatmates!expenses_paid_by_fkey (name),
-            categories (name),
-            expense_splits (flatmate_id)
-          `
-          )
-          .order("date", { ascending: false }),
-      ]);
+  const [query, setQuery] = useState("");
+  const [personId, setPersonId] = useState(ALL);
+  const [categoryId, setCategoryId] = useState(ALL);
+  const [limit, setLimit] = useState(PAGE);
 
-      if (flatmatesRes.error) throw flatmatesRes.error;
-      if (expensesRes.error) throw expensesRes.error;
+  const nameOf = useMemo(() => {
+    const map = new Map(people.map((p) => [p.id, p.name]));
+    return (id: string) => map.get(id) ?? "Someone";
+  }, [people]);
 
-      setFlatmates(flatmatesRes.data || []);
-      setExpenses(expensesRes.data || []);
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-      toast.error("Error fetching data");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    // Wait for context to finish loading
-    if (contextLoading) {
-      console.log("Expenses: Context still loading, waiting...");
-      return;
-    }
-    
-    console.log("Expenses: Context loaded. SplitSpaces:", splitSpaces.length, "Selected:", selectedSplitSpace?.name);
-    
-    // If no split spaces exist (migrations not run), fetch without filter
-    if (splitSpaces.length === 0) {
-      console.log("Expenses: No split spaces, fetching without filter");
-      fetchDataWithoutSplitSpace();
-    } else if (selectedSplitSpace) {
-      console.log("Expenses: Fetching with SplitSpace:", selectedSplitSpace.name);
-      fetchData();
-    } else {
-      console.log("Expenses: No SplitSpace selected, fetching without filter as fallback");
-      fetchDataWithoutSplitSpace();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSplitSpace?.id, splitSpaces.length, contextLoading]);
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      console.log("Expenses: fetchData called. SplitSpace:", selectedSplitSpace?.id);
-      
-      // Try to fetch with split_space_id filter if available
-      let flatmatesRes, expensesRes;
-      
-      if (selectedSplitSpace) {
-        try {
-          [flatmatesRes, expensesRes] = await Promise.all([
-            supabase
-              .from("flatmates")
-              .select("id, name")
-              .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-              .order("name"),
-            supabase
-              .from("expenses")
-              .select(
-                `
-                *,
-                flatmates!expenses_paid_by_fkey (name),
-                categories (name),
-                expense_splits (flatmate_id)
-              `
-              )
-              .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-              .order("date", { ascending: false }),
-          ]);
-        } catch (queryError: any) {
-          // If query syntax error, try without the or filter
-          console.warn("Expenses: Query with split_space_id failed, trying without filter:", queryError);
-          [flatmatesRes, expensesRes] = await Promise.all([
-            supabase
-              .from("flatmates")
-              .select("id, name")
-              .order("name"),
-            supabase
-              .from("expenses")
-              .select(
-                `
-                *,
-                flatmates!expenses_paid_by_fkey (name),
-                categories (name),
-                expense_splits (flatmate_id)
-              `
-              )
-              .order("date", { ascending: false }),
-          ]);
-        }
-      } else {
-        // No split space, fetch all
-        [flatmatesRes, expensesRes] = await Promise.all([
-          supabase
-            .from("flatmates")
-            .select("id, name")
-            .order("name"),
-          supabase
-            .from("expenses")
-            .select(
-              `
-              *,
-              flatmates!expenses_paid_by_fkey (name),
-              expense_splits (flatmate_id)
-            `
-            )
-            .order("date", { ascending: false }),
-        ]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return expenses.filter((e) => {
+      if (personId !== ALL && e.paid_by !== personId && !e.expense_splits.some((s) => s.flatmate_id === personId)) {
+        return false;
       }
-
-      if (flatmatesRes.error) {
-        console.error("Flatmates error:", flatmatesRes.error);
-        // If it's a column error, try without filter
-        if (flatmatesRes.error.message?.includes("column") || flatmatesRes.error.code === "42703") {
-          const { data, error } = await supabase
-            .from("flatmates")
-            .select("id, name")
-            .order("name");
-          if (error) throw error;
-          setFlatmates(data || []);
-        } else {
-          throw flatmatesRes.error;
-        }
-      } else {
-        setFlatmates(flatmatesRes.data || []);
-      }
-
-      if (expensesRes.error) {
-        console.error("Expenses error:", expensesRes.error);
-        // If it's a column error, try without filter
-        if (expensesRes.error.message?.includes("column") || expensesRes.error.code === "42703") {
-          const { data, error } = await supabase
-            .from("expenses")
-            .select(
-              `
-              *,
-              flatmates!expenses_paid_by_fkey (name),
-              expense_splits (flatmate_id)
-            `
-            )
-            .order("date", { ascending: false });
-          if (error) throw error;
-          setExpenses(data || []);
-        } else {
-          throw expensesRes.error;
-        }
-      } else {
-        setExpenses(expensesRes.data || []);
-      }
-
-      console.log("Flatmates fetched:", flatmatesRes.data?.length || 0);
-      console.log("Expenses fetched:", expensesRes.data?.length || 0);
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-      toast.error(`Error fetching data: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (
-      !formData.title ||
-      !formData.amount ||
-      !formData.paidBy ||
-      formData.splitBetween.length === 0
-    ) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-
-    setSubmitLoading(true);
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
-      if (editingExpense) {
-        // Update expense
-        const { error: expenseError } = await supabase
-          .from("expenses")
-          .update({
-            title: formData.title,
-            amount: parseFloat(formData.amount),
-            date: format(formData.date, "yyyy-MM-dd"),
-            paid_by: formData.paidBy,
-            category_id: formData.categoryId || null,
-          })
-          .eq("id", editingExpense.id);
-
-        if (expenseError) throw expenseError;
-
-        // Delete old splits
-        await supabase
-          .from("expense_splits")
-          .delete()
-          .eq("expense_id", editingExpense.id);
-
-        // Insert new splits
-        const { error: splitsError } = await supabase
-          .from("expense_splits")
-          .insert(
-            formData.splitBetween.map((flatmateId) => ({
-              expense_id: editingExpense.id,
-              flatmate_id: flatmateId,
-            }))
-          );
-
-        if (splitsError) throw splitsError;
-        toast.success("Expense updated successfully");
-      } else {
-        // Create new expense
-        const expenseDataToInsert: any = {
-          title: formData.title,
-          amount: parseFloat(formData.amount),
-          date: format(formData.date, "yyyy-MM-dd"),
-          paid_by: formData.paidBy,
-          created_by: user.id,
-          category_id: formData.categoryId || null,
-        };
-
-        // Only add split_space_id if it exists and is selected
-        if (selectedSplitSpace) {
-          expenseDataToInsert.split_space_id = selectedSplitSpace.id;
-        }
-
-        const { data: expenseData, error: expenseError } = await supabase
-          .from("expenses")
-          .insert(expenseDataToInsert)
-          .select()
-          .single();
-
-        if (expenseError) throw expenseError;
-
-        // Insert splits
-        const { error: splitsError } = await supabase
-          .from("expense_splits")
-          .insert(
-            formData.splitBetween.map((flatmateId) => ({
-              expense_id: expenseData.id,
-              flatmate_id: flatmateId,
-            }))
-          );
-
-        if (splitsError) throw splitsError;
-        toast.success("Expense added successfully");
-      }
-
-      setDialogOpen(false);
-      resetForm();
-      fetchData();
-    } catch (error: any) {
-      toast.error(error.message);
-      console.error(error);
-    } finally {
-      setSubmitLoading(false);
-    }
-  };
-
-  const handleEdit = (expense: Expense) => {
-    setEditingExpense(expense);
-    setFormData({
-      title: expense.title,
-      amount: expense.amount.toString(),
-      date: new Date(expense.date),
-      paidBy: expense.paid_by,
-      splitBetween: expense.expense_splits.map((s) => s.flatmate_id),
-      categoryId: expense.category_id || "",
+      if (categoryId !== ALL && e.category_id !== categoryId) return false;
+      if (!q) return true;
+      return (
+        e.title.toLowerCase().includes(q) ||
+        (e.categories?.name ?? "").toLowerCase().includes(q) ||
+        nameOf(e.paid_by).toLowerCase().includes(q) ||
+        e.expense_splits.some((s) => nameOf(s.flatmate_id).toLowerCase().includes(q))
+      );
     });
-    setDialogOpen(true);
-  };
+  }, [expenses, query, personId, categoryId, nameOf]);
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this expense?")) return;
-
-    setDeleteLoading(id);
-    try {
-      const { error } = await supabase.from("expenses").delete().eq("id", id);
-      if (error) throw error;
-      toast.success("Expense deleted");
-      fetchData();
-    } catch (error: any) {
-      toast.error(error.message);
-      console.error(error);
-    } finally {
-      setDeleteLoading(null);
+  const groups = useMemo(() => {
+    const result: MonthGroup[] = [];
+    for (const expense of filtered.slice(0, limit)) {
+      const key = expense.date.slice(0, 7);
+      let group = result[result.length - 1];
+      if (!group || group.key !== key) {
+        group = { key, label: format(parseDay(expense.date), "MMMM yyyy"), total: 0, expenses: [] };
+        result.push(group);
+      }
+      group.expenses.push(expense);
     }
+    // Month totals cover every match in that month, not only the rows shown so far.
+    for (const group of result) {
+      group.total = filtered.filter((e) => e.date.startsWith(group.key)).reduce((sum, e) => sum + e.amount, 0);
+    }
+    return result;
+  }, [filtered, limit]);
+
+  const filtering = query.trim() !== "" || personId !== ALL || categoryId !== ALL;
+  const filteredTotal = filtered.reduce((sum, e) => sum + e.amount, 0);
+  const selectedPerson = people.find((p) => p.id === personId);
+
+  const clearFilters = () => {
+    setQuery("");
+    setPersonId(ALL);
+    setCategoryId(ALL);
   };
 
-  const resetForm = () => {
-    setFormData({
-      title: "",
-      amount: "",
-      date: new Date(),
-      paidBy: "",
-      splitBetween: [],
-      categoryId: "",
-    });
-    setEditingExpense(null);
-  };
+  if (spacesLoading || (isLoading && !error)) return <ExpensesSkeleton />;
 
-  const toggleSplitMember = (flatmateId: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      splitBetween: prev.splitBetween.includes(flatmateId)
-        ? prev.splitBetween.filter((id) => id !== flatmateId)
-        : [...prev.splitBetween, flatmateId],
-    }));
-  };
-
-  // Allow page to work even if SplitSpaces feature isn't fully set up
-  if (!selectedSplitSpace && splitSpaces.length > 0) {
+  if (error) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">Please select a SplitSpace to continue.</p>
-        </div>
-      </div>
+      <ErrorState
+        title="Couldn't load expenses"
+        description={errorMessage(error, "Check your connection and try again.")}
+        onRetry={() => refetch()}
+      />
     );
   }
 
-  if (loading) {
+  if (people.length === 0) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
+      <>
+        <PageHeader title="Expenses" />
+        <EmptyState
+          icon={Users}
+          title="Add people before expenses"
+          description="Expenses are split between the people in this group."
+          action={
+            <Button asChild>
+              <Link to="/dashboard" state={{ addPerson: true }}>
+                <Plus /> Add people
+              </Link>
+            </Button>
+          }
+        />
+      </>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-2">Expenses</h1>
-          <p className="text-muted-foreground text-sm sm:text-base">
-            Track and manage all your shared expenses
-          </p>
-          {selectedSplitSpace && (
-            <p className="text-sm text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        <Dialog
-          open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button
-              className="shadow-md shadow-primary/20 self-start sm:self-auto"
-              disabled={flatmates.length === 0}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Add Expense
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>
-                {editingExpense ? "Edit Expense" : "Add New Expense"}
-              </DialogTitle>
-              <DialogDescription>
-                {editingExpense
-                  ? "Update expense details"
-                  : "Create a new shared expense"}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="title">Title *</Label>
-                <Input
-                  id="title"
-                  value={formData.title}
-                  onChange={(e) =>
-                    setFormData({ ...formData, title: e.target.value })
-                  }
-                  placeholder="Groceries, Rent, Utilities..."
-                  className="bg-secondary/50"
-                  required
-                />
-              </div>
+    <div className="mx-auto max-w-4xl">
+      <PageHeader
+        title="Expenses"
+        description={
+          expenses.length === 0
+            ? "Nothing added yet."
+            : filtering
+              ? `${pluralize(filtered.length, "match", "matches")} · ${formatMoney(filteredTotal)}`
+              : `${pluralize(expenses.length, "expense")} · ${formatMoney(filteredTotal)} in total`
+        }
+      />
 
-              <div className="space-y-2">
-                <Label htmlFor="amount">Amount *</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  step="0.01"
-                  value={formData.amount}
-                  onChange={(e) =>
-                    setFormData({ ...formData, amount: e.target.value })
-                  }
-                  placeholder="0.00"
-                  className="bg-secondary/50"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Date *</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal bg-secondary/50",
-                        !formData.date && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {formData.date
-                        ? format(formData.date, "PPP")
-                        : "Pick a date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="w-auto p-0 glass-card pointer-events-auto"
-                    align="start"
-                  >
-                    <Calendar
-                      mode="single"
-                      selected={formData.date}
-                      onSelect={(date) =>
-                        date && setFormData({ ...formData, date })
-                      }
-                      initialFocus
-                      className="pointer-events-auto"
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <CategorySelector
-                  value={formData.categoryId}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, categoryId: value })
-                  }
-                  splitSpaceId={selectedSplitSpace?.id}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="paidBy">Paid By *</Label>
-                <Select
-                  value={formData.paidBy}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, paidBy: value })
-                  }
-                >
-                  <SelectTrigger className="bg-secondary/50">
-                    <SelectValue placeholder="Select who paid" />
-                  </SelectTrigger>
-                  <SelectContent className="glass-card">
-                    {flatmates.map((flatmate) => (
-                      <SelectItem key={flatmate.id} value={flatmate.id}>
-                        {flatmate.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Split Between * (select all involved)</Label>
-                  {flatmates.length > 0 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => {
-                        if (formData.splitBetween.length === flatmates.length) {
-                          // Deselect all
-                          setFormData({ ...formData, splitBetween: [] });
-                        } else {
-                          // Select all
-                          setFormData({
-                            ...formData,
-                            splitBetween: flatmates.map((f) => f.id),
-                          });
-                        }
-                      }}
-                    >
-                      {formData.splitBetween.length === flatmates.length
-                        ? "Deselect All"
-                        : "Select All"}
-                    </Button>
-                  )}
-                </div>
-                <div className="space-y-2 max-h-40 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                  {flatmates.map((flatmate) => (
-                    <div
-                      key={flatmate.id}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        id={`split-${flatmate.id}`}
-                        checked={formData.splitBetween.includes(flatmate.id)}
-                        onCheckedChange={() => toggleSplitMember(flatmate.id)}
-                      />
-                      <Label
-                        htmlFor={`split-${flatmate.id}`}
-                        className="text-sm font-normal cursor-pointer"
-                      >
-                        {flatmate.name}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={submitLoading}
-              >
-                {submitLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    {editingExpense ? "Updating..." : "Adding..."}
-                  </>
-                ) : editingExpense ? (
-                  "Update Expense"
-                ) : (
-                  "Add Expense"
-                )}
+      {expenses.length === 0 ? (
+        <div className="rounded-xl border bg-card shadow-card">
+          <EmptyState
+            icon={Receipt}
+            title="No expenses yet"
+            description="Log what someone paid and who it was for. Balances update straight away."
+            action={
+              <Button onClick={() => openNew()}>
+                <Plus /> Add the first expense
               </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      {flatmates.length === 0 ? (
-        <Card className="glass-card">
-          <CardContent className="p-12 text-center">
-            <Receipt className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-muted-foreground mb-4">
-              Please add flatmates first before creating expenses
-            </p>
-            <Button
-              variant="outline"
-              onClick={() => (window.location.href = "/dashboard")}
-            >
-              Go to Dashboard
-            </Button>
-          </CardContent>
-        </Card>
+            }
+          />
+        </div>
       ) : (
-        <Card className="glass-card">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Receipt className="w-5 h-5 mr-2 text-primary" />
-              All Expenses ({expenses.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {expenses.length === 0 ? (
-              <div className="text-center py-12">
-                <Receipt className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-4">
-                  No expenses recorded yet
-                </p>
-                <Button
-                  onClick={() => setDialogOpen(true)}
-                  variant="outline"
-                  className="border-primary/30 hover:bg-primary/10"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Your First Expense
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {expenses.map((expense, index) => {
-                  const splitCount = expense.expense_splits.length;
-                  const sharePerPerson = expense.amount / splitCount;
+        <>
+          <div className="mb-5 flex flex-col gap-2 sm:flex-row">
+            <div className="relative flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setLimit(PAGE);
+                }}
+                placeholder="Search by title, category or person"
+                aria-label="Search expenses"
+                className="h-10 bg-card pl-9"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:flex">
+              <Select
+                value={personId}
+                onValueChange={(v) => {
+                  setPersonId(v);
+                  setLimit(PAGE);
+                }}
+              >
+                <SelectTrigger className="h-10 bg-card sm:w-44" aria-label="Filter by person">
+                  <SelectValue>{selectedPerson ? `Involving ${selectedPerson.name}` : "Everyone"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Everyone</SelectItem>
+                  {people.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={categoryId}
+                onValueChange={(v) => {
+                  setCategoryId(v);
+                  setLimit(PAGE);
+                }}
+              >
+                <SelectTrigger className="h-10 bg-card sm:w-40" aria-label="Filter by category">
+                  <SelectValue placeholder="All categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All categories</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-                  return (
-                    <motion.div
-                      key={expense.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                    >
-                      <Card className="bg-secondary/30 border-border/50 hover:border-primary/30 transition-colors">
-                        <CardContent className="p-4">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                <h3 className="font-semibold text-lg truncate">
-                                  {expense.title}
-                                </h3>
-                                {expense.categories && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    {expense.categories.name}
-                                  </Badge>
-                                )}
-                                <span className="text-sm text-muted-foreground whitespace-nowrap">
-                                  {format(
-                                    new Date(expense.date),
-                                    "MMM dd, yyyy"
-                                  )}
-                                </span>
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                Paid by{" "}
-                                <span className="text-foreground font-medium">
-                                  {expense.flatmates.name}
-                                </span>
-                                {" • "}
-                                Split between {splitCount}{" "}
-                                {splitCount === 1 ? "person" : "people"}
-                                {" • "}${sharePerPerson.toFixed(2)} each
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-2xl font-bold text-primary whitespace-nowrap">
-                                ${expense.amount.toFixed(2)}
-                              </span>
-                              <div className="flex gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleEdit(expense)}
-                                  className="hover:bg-primary/10 hover:text-primary"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleDelete(expense.id)}
-                                  className="hover:bg-destructive/10 hover:text-destructive"
-                                  disabled={deleteLoading === expense.id}
-                                >
-                                  {deleteLoading === expense.id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="w-4 h-4" />
-                                  )}
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          {filtered.length === 0 ? (
+            <div className="rounded-xl border bg-card shadow-card">
+              <EmptyState
+                icon={Search}
+                title="No matching expenses"
+                description="Try a different search, or clear the filters."
+                action={
+                  <Button variant="outline" onClick={clearFilters}>
+                    <X /> Clear filters
+                  </Button>
+                }
+              />
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {groups.map((group) => (
+                <section key={group.key} aria-labelledby={`month-${group.key}`}>
+                  <div className="mb-2 flex items-baseline justify-between gap-3 px-1">
+                    <h2 id={`month-${group.key}`} className="text-sm font-semibold">
+                      {group.label}
+                    </h2>
+                    <p className="text-sm text-muted-foreground tabular-nums">{formatMoney(group.total)}</p>
+                  </div>
+                  <ul className="divide-y overflow-hidden rounded-xl border bg-card shadow-card">
+                    {group.expenses.map((expense) => (
+                      <li key={expense.id}>
+                        <ExpenseRow
+                          expense={expense}
+                          nameOf={nameOf}
+                          peopleCount={people.length}
+                          onOpen={openDetail}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+
+              {filtered.length > limit && (
+                <div className="flex justify-center">
+                  <Button variant="outline" onClick={() => setLimit((l) => l + PAGE)}>
+                    Show more ({filtered.length - limit} left)
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 };
+
+const ExpensesSkeleton = () => (
+  <div className="mx-auto max-w-4xl" aria-busy="true" aria-label="Loading expenses">
+    <Skeleton className="mb-2 h-8 w-40" />
+    <Skeleton className="mb-8 h-4 w-56" />
+    <Skeleton className="mb-5 h-10 w-full" />
+    <div className="space-y-2 rounded-xl border bg-card p-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 py-2">
+          <Skeleton className="h-11 w-11 rounded-lg" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-3 w-2/3" />
+          </div>
+          <Skeleton className="h-4 w-16" />
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 export default Expenses;

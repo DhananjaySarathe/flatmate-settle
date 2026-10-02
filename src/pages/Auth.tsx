@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -8,375 +8,698 @@ import {
   Trophy,
   ArrowRight,
   Check,
-  X,
   TrendingUp,
   Receipt,
-  Sparkles,
-  ShieldCheck,
-  Mail,
+  FileText,
+  HandCoins,
   Loader2,
   Pizza,
-  Star,
+  Eye,
+  EyeOff,
+  MailCheck,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card } from "@/components/ui/card";
+import {
+  ResponsiveDialog,
+  ResponsiveDialogBody,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/common/ResponsiveDialog";
+import { PersonAvatar } from "@/components/common/PersonAvatar";
+import { errorMessage } from "@/lib/db";
+import { formatMoneyCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+/** Page gutter for this public page (it renders outside the app Layout). */
+const WRAP = "mx-auto w-full max-w-6xl px-4 sm:px-6";
+
+/* ------------------------------------------------------------------ */
+/* Feature cards                                                       */
+/* ------------------------------------------------------------------ */
+
+const FEATURE_TONES = {
+  primary: "bg-primary/10 text-primary",
+  success: "bg-success/10 text-success",
+  amber: "bg-amber-100 text-amber-800",
+  rose: "bg-rose-100 text-rose-700",
+  sky: "bg-sky-100 text-sky-800",
+  violet: "bg-violet-100 text-violet-800",
+};
 
 interface FeatureCardProps {
   icon: LucideIcon;
   title: string;
   description: string;
-  badge?: string;
-  tone?: "primary" | "accent" | "amber" | "rose" | "sky" | "violet";
+  tone?: keyof typeof FEATURE_TONES;
 }
 
-const FEATURE_TONES = {
-  primary: { bg: "bg-primary/10", icon: "text-primary", hover: "group-hover:bg-primary group-hover:text-primary-foreground" },
-  accent: { bg: "bg-accent/10", icon: "text-accent", hover: "group-hover:bg-accent group-hover:text-accent-foreground" },
-  amber: { bg: "bg-amber-100", icon: "text-amber-700", hover: "group-hover:bg-amber-500 group-hover:text-white" },
-  rose: { bg: "bg-rose-100", icon: "text-rose-600", hover: "group-hover:bg-rose-500 group-hover:text-white" },
-  sky: { bg: "bg-sky-100", icon: "text-sky-700", hover: "group-hover:bg-sky-500 group-hover:text-white" },
-  violet: { bg: "bg-violet-100", icon: "text-violet-700", hover: "group-hover:bg-violet-500 group-hover:text-white" },
+const FeatureCard = ({ icon: Icon, title, description, tone = "primary" }: FeatureCardProps) => (
+  <div className="rounded-xl border bg-card p-5 shadow-card sm:p-6">
+    <div
+      className={cn("mb-4 flex h-11 w-11 items-center justify-center rounded-xl", FEATURE_TONES[tone])}
+      aria-hidden="true"
+    >
+      <Icon size={20} />
+    </div>
+    <h3 className="mb-1.5 text-base font-semibold text-foreground sm:text-lg">{title}</h3>
+    <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
+  </div>
+);
+
+const FEATURES: FeatureCardProps[] = [
+  {
+    icon: Users,
+    title: "Groups for every flat and trip",
+    description:
+      "Keep the flat, the Goa trip and office lunches apart. Each group has its own people, expenses and balances.",
+    tone: "primary",
+  },
+  {
+    icon: Receipt,
+    title: "Add expenses in seconds",
+    description:
+      "Enter the amount, who paid and a category. Split equally between exactly the people involved. We handle the math.",
+    tone: "amber",
+  },
+  {
+    icon: HandCoins,
+    title: "Who pays whom",
+    description:
+      "See who owes what and settle up with the fewest payments. Mark a period as settled and start fresh.",
+    tone: "success",
+  },
+  {
+    icon: TrendingUp,
+    title: "Spending insights",
+    description:
+      "Spending over time, category breakdowns and each person's share of the costs.",
+    tone: "sky",
+  },
+  {
+    icon: Trophy,
+    title: "Fun leaderboards",
+    description:
+      "Badges like Milk Bhai, Fuel King and Silent Assassin make the month-end money talk a lot lighter.",
+    tone: "rose",
+  },
+  {
+    icon: FileText,
+    title: "PDF reports and share links",
+    description:
+      "Download a PDF report, or share a read-only link so everyone sees the same numbers.",
+    tone: "violet",
+  },
+];
+
+const STEPS = [
+  {
+    n: "1",
+    title: "Start with a group",
+    body: "Sign up and you get a Default group straight away. Add more for trips or events.",
+  },
+  {
+    n: "2",
+    title: "Add your people",
+    body: "Add the people you share costs with by name. They don't need an account.",
+  },
+  {
+    n: "3",
+    title: "Track and settle",
+    body: "Log expenses as they happen. At month-end, see who pays whom and mark it as settled.",
+  },
+];
+
+/* ------------------------------------------------------------------ */
+/* Sign in / sign up                                                   */
+/* ------------------------------------------------------------------ */
+
+type AuthMode = "signin" | "signup";
+type Field = "name" | "email" | "password";
+type FieldErrors = Partial<Record<Field, string>>;
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Supabase's default minimum password length. */
+const MIN_PASSWORD_LENGTH = 6;
+
+const ALREADY_REGISTERED_MESSAGE =
+  "There's already an account with this email. Enter your password to sign in.";
+
+const isAlreadyRegisteredError = (error: unknown) => {
+  const lower = errorMessage(error, "").toLowerCase();
+  return lower.includes("already registered") || lower.includes("already been registered");
 };
 
-const FeatureCard = ({
-  icon: Icon,
-  title,
-  description,
-  badge,
-  tone = "primary",
-}: FeatureCardProps) => {
-  const t = FEATURE_TONES[tone];
-  return (
-    <Card className="p-6 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 group bg-card border-border">
-      <div
-        className={cn(
-          "w-12 h-12 rounded-xl flex items-center justify-center mb-4 transition-colors",
-          t.bg,
-          t.icon,
-          t.hover
-        )}
-      >
-        <Icon size={22} />
-      </div>
-      <div className="flex items-center gap-2 mb-2">
-        <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-        {badge && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 font-medium">
-            {badge}
-          </span>
-        )}
-      </div>
-      <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
-    </Card>
-  );
+/** Turns the common Supabase auth errors into something that says how to recover. */
+const describeAuthError = (error: unknown, mode: AuthMode): string => {
+  const raw = errorMessage(error, "");
+  const lower = raw.toLowerCase();
+  if (lower.includes("invalid login credentials")) {
+    return "That email and password don't match. Check them and try again.";
+  }
+  if (lower.includes("email not confirmed")) {
+    return "Your email isn't confirmed yet. Open the link in the email we sent you, then sign in.";
+  }
+  if (isAlreadyRegisteredError(error)) return ALREADY_REGISTERED_MESSAGE;
+  if (lower.includes("failed to fetch") || lower.includes("network")) {
+    return "Couldn't reach ExpenseWaale. Check your connection and try again.";
+  }
+  if (raw) return raw;
+  return mode === "signin"
+    ? "Couldn't sign you in. Try again."
+    : "Couldn't create your account. Try again.";
 };
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialMode?: "signin" | "signup";
+  initialMode?: AuthMode;
 }
 
-const AuthModal = ({
-  isOpen,
-  onClose,
-  initialMode = "signin",
-}: AuthModalProps) => {
-  const [mode, setMode] = useState<"signin" | "signup">(initialMode);
+const AuthModal = ({ isOpen, onClose, initialMode = "signin" }: AuthModalProps) => {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [formData, setFormData] = useState({ email: "", password: "", name: "" });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [wasOpen, setWasOpen] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    setMode(initialMode);
-  }, [initialMode, isOpen]);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const refs = { name: nameRef, email: emailRef, password: passwordRef };
 
-  if (!isOpen) return null;
+  // Reset to the requested mode each time the modal opens. Done during render
+  // (not in an effect) so the first field exists before the dialog focuses it.
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) {
+      setMode(initialMode);
+      setFieldErrors({});
+      setFormError(null);
+      setNotice(null);
+      setShowPassword(false);
+    }
+  }
+
+  const isSignUp = mode === "signup";
+  const firstFieldRef = isSignUp ? nameRef : emailRef;
+
+  const updateField = (field: Field, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (fieldErrors[field]) setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
+    if (formError) setFormError(null);
+  };
+
+  // The keyboard's "next" key sends Enter, which would submit a half-filled
+  // form. Move on to the next empty field instead.
+  const focusNextOnEnter =
+    (next: React.RefObject<HTMLInputElement>) => (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+      if (next.current && !next.current.value) {
+        e.preventDefault();
+        next.current.focus();
+      }
+    };
+
+  const switchMode = (next: AuthMode) => {
+    setMode(next);
+    setFieldErrors({});
+    setFormError(null);
+    setNotice(null);
+    requestAnimationFrame(() => (next === "signup" ? nameRef : emailRef).current?.focus());
+  };
+
+  // Sign-up hit an existing account: keep the email and password they typed
+  // and put them one tap away from signing in.
+  const moveToSignIn = () => {
+    setMode("signin");
+    setFieldErrors({});
+    setNotice(null);
+    requestAnimationFrame(() => passwordRef.current?.focus());
+  };
+
+  const validate = (): FieldErrors => {
+    const errors: FieldErrors = {};
+    if (isSignUp && !formData.name.trim()) errors.name = "Enter your name.";
+    const email = formData.email.trim();
+    if (!email) errors.email = "Enter your email address.";
+    else if (!EMAIL_PATTERN.test(email)) {
+      errors.email = "Enter a valid email address, like name@example.com.";
+    }
+    if (!formData.password) {
+      errors.password = isSignUp ? "Choose a password." : "Enter your password.";
+    } else if (isSignUp && formData.password.length < MIN_PASSWORD_LENGTH) {
+      errors.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+    }
+    return errors;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.email || !formData.password) {
-      toast.error("Please fill in all fields");
-      return;
-    }
-    if (mode === "signup" && !formData.name) {
-      toast.error("Please provide your full name");
+    if (loading) return;
+
+    const errors = validate();
+    setFieldErrors(errors);
+    setFormError(null);
+    setNotice(null);
+    const firstInvalid = (["name", "email", "password"] as const).find((field) => errors[field]);
+    if (firstInvalid) {
+      refs[firstInvalid].current?.focus();
       return;
     }
 
+    const email = formData.email.trim();
     setLoading(true);
     try {
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
+          email,
           password: formData.password,
         });
         if (error) throw error;
-        toast.success("Welcome back!");
+        toast.success("Welcome back");
         onClose();
         navigate("/dashboard");
       } else {
-        const { error } = await supabase.auth.signUp({
-          email: formData.email,
+        const { data, error } = await supabase.auth.signUp({
+          email,
           password: formData.password,
           options: {
-            data: { full_name: formData.name },
+            data: { full_name: formData.name.trim() },
             emailRedirectTo: `${window.location.origin}/dashboard`,
           },
         });
         if (error) throw error;
-        toast.success("Account created successfully!");
+        if (!data.session) {
+          // With email confirmation on, Supabase answers a sign-up for an
+          // existing account with a stand-in user that has no identities and
+          // sends no email. Point them at sign in instead of the inbox.
+          if (Array.isArray(data.user?.identities) && data.user.identities.length === 0) {
+            moveToSignIn();
+            setFormError(ALREADY_REGISTERED_MESSAGE);
+            return;
+          }
+          // Email confirmation is on: there's no session yet, so /dashboard
+          // would just bounce back here. Stay put and say what to do next.
+          setMode("signin");
+          setFormData((prev) => ({ ...prev, password: "" }));
+          setShowPassword(false);
+          setNotice("Check your inbox to confirm your email, then sign in.");
+          return;
+        }
+        toast.success("Account created", {
+          description: "Your Default group is ready.",
+        });
         onClose();
         navigate("/dashboard");
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "An error occurred";
-      toast.error(errorMessage);
+      if (mode === "signup" && isAlreadyRegisteredError(error)) moveToSignIn();
+      setFormError(describeAuthError(error, mode));
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="absolute inset-0 bg-foreground/40 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      <Card className="relative w-full max-w-md shadow-2xl overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-60" />
-        <div className="p-6 sm:p-8">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl sm:text-2xl font-bold text-foreground">
-              {mode === "signin" ? "Welcome back" : "Create account"}
-            </h2>
-            <button
-              onClick={onClose}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1 -m-1"
-              aria-label="Close"
-            >
-              <X size={20} />
-            </button>
-          </div>
+  const errorId = (field: Field) => `auth-${field}-error`;
+  const inputClass =
+    "h-11 text-base md:text-base aria-[invalid=true]:border-destructive aria-[invalid=true]:focus-visible:ring-destructive";
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === "signup" && (
-              <div className="space-y-1.5">
-                <Label htmlFor="name">Full name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="John Doe"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                />
+  return (
+    <ResponsiveDialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <ResponsiveDialogContent
+        aria-modal="true"
+        className="sm:max-w-md"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          firstFieldRef.current?.focus();
+        }}
+      >
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle className="text-xl sm:text-2xl">
+            {isSignUp ? "Create your account" : "Welcome back"}
+          </ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            {isSignUp
+              ? "It's free. You start with a Default group, ready for your people."
+              : "Sign in to see your groups and balances."}
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
+
+        <form onSubmit={handleSubmit} noValidate className="flex min-h-0 flex-1 flex-col">
+          <ResponsiveDialogBody className="space-y-4 pt-2">
+            {notice && (
+              <div
+                role="status"
+                className="flex items-start gap-3 rounded-lg bg-credit-soft px-3.5 py-3 text-sm text-foreground"
+              >
+                <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-credit" aria-hidden="true" />
+                <p>{notice}</p>
               </div>
             )}
+
+            {isSignUp && (
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-name">Your name</Label>
+                <Input
+                  ref={nameRef}
+                  id="auth-name"
+                  name="name"
+                  type="text"
+                  autoComplete="name"
+                  autoCapitalize="words"
+                  enterKeyHint="next"
+                  required
+                  aria-required="true"
+                  aria-invalid={fieldErrors.name ? true : undefined}
+                  aria-describedby={fieldErrors.name ? errorId("name") : undefined}
+                  value={formData.name}
+                  onChange={(e) => updateField("name", e.target.value)}
+                  onKeyDown={focusNextOnEnter(emailRef)}
+                  className={inputClass}
+                />
+                {fieldErrors.name && (
+                  <p id={errorId("name")} className="text-sm text-destructive">
+                    {fieldErrors.name}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="auth-email">Email</Label>
               <Input
-                id="email"
+                ref={emailRef}
+                id="auth-email"
+                name="email"
                 type="email"
-                placeholder="john@example.com"
+                inputMode="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
+                enterKeyHint="next"
+                placeholder="you@example.com"
+                required
+                aria-required="true"
+                aria-invalid={fieldErrors.email ? true : undefined}
+                aria-describedby={fieldErrors.email ? errorId("email") : undefined}
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={(e) => updateField("email", e.target.value)}
+                onKeyDown={focusNextOnEnter(passwordRef)}
+                className={inputClass}
               />
+              {fieldErrors.email && (
+                <p id={errorId("email")} className="text-sm text-destructive">
+                  {fieldErrors.email}
+                </p>
+              )}
             </div>
+
             <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={(e) =>
-                  setFormData({ ...formData, password: e.target.value })
-                }
-              />
+              <Label htmlFor="auth-password">Password</Label>
+              <div className="relative">
+                <Input
+                  ref={passwordRef}
+                  id="auth-password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete={isSignUp ? "new-password" : "current-password"}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  enterKeyHint="go"
+                  required
+                  aria-required="true"
+                  minLength={isSignUp ? MIN_PASSWORD_LENGTH : undefined}
+                  aria-invalid={fieldErrors.password ? true : undefined}
+                  aria-describedby={
+                    fieldErrors.password
+                      ? errorId("password")
+                      : isSignUp
+                        ? "auth-password-hint"
+                        : undefined
+                  }
+                  value={formData.password}
+                  onChange={(e) => updateField("password", e.target.value)}
+                  className={cn(inputClass, "pr-12")}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-controls="auth-password"
+                  className="absolute right-0.5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              {fieldErrors.password ? (
+                <p id={errorId("password")} className="text-sm text-destructive">
+                  {fieldErrors.password}
+                </p>
+              ) : (
+                isSignUp && (
+                  <p id="auth-password-hint" className="text-sm text-muted-foreground">
+                    At least {MIN_PASSWORD_LENGTH} characters.
+                  </p>
+                )
+              )}
             </div>
-            <Button type="submit" className="w-full mt-2" disabled={loading} size="lg">
+
+            {formError && (
+              <p
+                role="alert"
+                className="rounded-lg border border-destructive/25 bg-destructive/5 px-3.5 py-3 text-sm text-destructive"
+              >
+                {formError}
+              </p>
+            )}
+          </ResponsiveDialogBody>
+
+          <ResponsiveDialogFooter className="flex-col gap-3 sm:flex-col sm:items-stretch sm:justify-start">
+            {/* aria-disabled rather than disabled: a disabled button drops focus to
+                <body> mid-request, which loses keyboard users' place in the sheet.
+                handleSubmit already ignores repeat submits while loading. */}
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full aria-disabled:cursor-progress"
+              aria-disabled={loading || undefined}
+            >
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Please wait
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  {isSignUp ? "Creating account…" : "Signing in…"}
                 </>
-              ) : mode === "signin" ? (
-                "Sign in"
+              ) : isSignUp ? (
+                "Create account"
               ) : (
-                "Create free account"
+                "Sign in"
               )}
             </Button>
-          </form>
-
-          <div className="mt-5 text-center text-sm text-muted-foreground">
-            {mode === "signin" ? (
-              <>
-                New to ExpenseWaale?{" "}
-                <button
-                  onClick={() => setMode("signup")}
-                  className="text-primary hover:underline font-medium"
-                >
-                  Sign up
-                </button>
-              </>
-            ) : (
-              <>
-                Already have an account?{" "}
-                <button
-                  onClick={() => setMode("signin")}
-                  className="text-primary hover:underline font-medium"
-                >
-                  Sign in
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </Card>
-    </div>
+            <p className="text-center text-sm text-muted-foreground">
+              {isSignUp ? "Already have an account?" : "New to ExpenseWaale?"}{" "}
+              <button
+                type="button"
+                onClick={() => switchMode(isSignUp ? "signin" : "signup")}
+                className="inline-flex min-h-10 items-center rounded-sm px-1.5 font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {isSignUp ? "Sign in" : "Sign up"}
+              </button>
+            </p>
+          </ResponsiveDialogFooter>
+        </form>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 };
 
+/* ------------------------------------------------------------------ */
+/* Animated product preview                                            */
+/* ------------------------------------------------------------------ */
+
+type MockTab = "groups" | "settle" | "badges";
+
+const MOCK_TABS: { id: MockTab; label: string }[] = [
+  { id: "groups", label: "Groups" },
+  { id: "settle", label: "Settle up" },
+  { id: "badges", label: "Badges" },
+];
+
+const MOCK_GROUPS = [
+  { name: "Flat 404", meta: "4 people · 38 expenses", current: true },
+  { name: "Goa trip", meta: "6 people · 21 expenses", current: false },
+  { name: "Office lunch", meta: "5 people · 12 expenses", current: false },
+];
+
+const MOCK_PAYMENTS = [
+  { from: "Alice", amount: 450 },
+  { from: "Bob", amount: 1000 },
+];
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Entrance for each preview screen; skipped for people who prefer less motion. */
+const MOCK_ENTER =
+  "animate-in fade-in slide-in-from-right-4 duration-500 motion-reduce:animate-none";
+
 const MockScreen = () => {
-  const [activeTab, setActiveTab] = useState<"spaces" | "settlements" | "badges">(
-    "spaces"
-  );
+  const [activeTab, setActiveTab] = useState<MockTab>("groups");
+  // Stop the slideshow once someone picks a tab, or if they prefer less motion.
+  const [autoPlay, setAutoPlay] = useState(() => !prefersReducedMotion());
 
   useEffect(() => {
-    const tabs: ("spaces" | "settlements" | "badges")[] = [
-      "spaces",
-      "settlements",
-      "badges",
-    ];
+    if (!autoPlay) return;
     const interval = setInterval(() => {
-      setActiveTab((prev) => tabs[(tabs.indexOf(prev) + 1) % tabs.length]);
+      setActiveTab((prev) => {
+        const index = MOCK_TABS.findIndex((t) => t.id === prev);
+        return MOCK_TABS[(index + 1) % MOCK_TABS.length].id;
+      });
     }, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [autoPlay]);
 
-  const content = {
-    spaces: (
-      <div className="space-y-2 animate-in slide-in-from-right-4 duration-500 fade-in">
-        <div className="flex items-center justify-between text-xs text-muted-foreground mb-2 px-1">
-          <span className="font-medium tracking-wide">YOUR SPACES</span>
-          <span>3 active</span>
+  const youGetBack = MOCK_PAYMENTS.reduce((sum, p) => sum + p.amount, 0);
+
+  const content: Record<MockTab, React.ReactNode> = {
+    groups: (
+      <div className={MOCK_ENTER}>
+        <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted-foreground">
+          <span className="font-medium">Your groups</span>
+          <span>3 groups</span>
         </div>
-        {["Apartment 404", "Goa Trip 2024", "Office Lunch"].map((space) => (
-          <div
-            key={space}
-            className="flex items-center justify-between p-3 rounded-lg bg-secondary/60 border border-border hover:border-primary/40 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
-                {space[0]}
-              </div>
-              <span className="text-sm font-medium text-foreground">{space}</span>
-            </div>
-            <span className="text-xs text-muted-foreground">Open →</span>
-          </div>
-        ))}
+        <ul className="divide-y rounded-lg border bg-card">
+          {MOCK_GROUPS.map((group) => (
+            <li key={group.name} className="flex items-center gap-3 px-3 py-2.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-sm font-semibold text-primary">
+                {group.name[0]}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-foreground">{group.name}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">{group.meta}</span>
+              </span>
+              {group.current && (
+                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  Current
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
       </div>
     ),
-    settlements: (
-      <div className="space-y-3 animate-in slide-in-from-right-4 duration-500 fade-in">
-        <div className="text-center pb-3 border-b border-border">
-          <div className="text-xs text-muted-foreground mb-1 tracking-wide font-medium">
-            TOTAL OWED TO YOU
+    settle: (
+      <div className={MOCK_ENTER}>
+        <div className="mb-3 rounded-lg bg-credit-soft px-3 py-3 text-center">
+          <div className="text-xs font-medium text-credit">You get back</div>
+          <div className="text-2xl font-bold tabular-nums tracking-tight text-credit">
+            {formatMoneyCompact(youGetBack)}
           </div>
-          <span className="text-2xl text-accent font-bold tracking-tight">
-            ₹1,450.00
-          </span>
+          <div className="text-[11px] text-muted-foreground">Flat 404 · since last settle-up</div>
         </div>
-        {[
-          { name: "Alice", note: "Rent share", amt: "+₹450" },
-          { name: "Bob", note: "Dinner & drinks", amt: "+₹1000" },
-        ].map((s) => (
-          <div
-            key={s.name}
-            className="flex items-center justify-between p-2 rounded-lg hover:bg-secondary/60 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-semibold">
-                {s.name[0]}
-              </div>
-              <div>
-                <div className="text-foreground font-medium text-sm">{s.name}</div>
-                <div className="text-[10px] text-muted-foreground">{s.note}</div>
-              </div>
-            </div>
-            <span className="text-accent font-semibold text-sm">{s.amt}</span>
-          </div>
-        ))}
+        <ul className="divide-y rounded-lg border bg-card">
+          {MOCK_PAYMENTS.map((p) => (
+            <li key={p.from} className="flex items-center gap-3 px-3 py-2.5">
+              <span className="flex shrink-0 items-center -space-x-1.5">
+                <PersonAvatar name={p.from} size="xs" className="ring-2 ring-card" />
+                <PersonAvatar name="You" size="xs" className="ring-2 ring-card" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                <span className="font-semibold">{p.from}</span>{" "}
+                <span className="text-muted-foreground">pays</span>{" "}
+                <span className="font-semibold">you</span>
+              </span>
+              <span className="shrink-0 text-sm font-semibold tabular-nums">
+                {formatMoneyCompact(p.amount)}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 px-1 text-[11px] text-muted-foreground">
+          {MOCK_PAYMENTS.length} payments settle everyone up.
+        </p>
       </div>
     ),
     badges: (
-      <div className="grid grid-cols-2 gap-3 animate-in slide-in-from-right-4 duration-500 fade-in">
-        <div className="p-3 bg-secondary/60 rounded-lg border border-border text-center">
-          <div className="text-3xl mb-1">🥛</div>
+      <div className={cn("grid grid-cols-2 gap-3", MOCK_ENTER)}>
+        <div className="rounded-lg border bg-card p-3 text-center">
+          <div className="mb-1 text-3xl" aria-hidden="true">
+            🥛
+          </div>
           <div className="text-xs font-bold text-foreground">Milk Bhai</div>
-          <div className="text-[10px] text-muted-foreground mt-0.5">
-            Top grocery spender
-          </div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">Top grocery spender</div>
         </div>
-        <div className="p-3 bg-secondary/60 rounded-lg border border-border text-center">
-          <div className="text-3xl mb-1">⛽</div>
+        <div className="rounded-lg border bg-card p-3 text-center">
+          <div className="mb-1 text-3xl" aria-hidden="true">
+            ⛽
+          </div>
           <div className="text-xs font-bold text-foreground">Fuel King</div>
-          <div className="text-[10px] text-muted-foreground mt-0.5">
-            Most fuel paid
-          </div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">Most fuel paid</div>
         </div>
-        <div className="col-span-2 p-3 rounded-lg border border-primary/30 bg-primary/5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-primary/15 rounded-lg text-primary">
+        <div className="col-span-2 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="shrink-0 rounded-lg bg-primary/15 p-2 text-primary" aria-hidden="true">
               <Trophy size={16} />
             </div>
-            <div>
-              <div className="text-xs font-semibold text-foreground">
-                Most Generous
-              </div>
-              <div className="text-[10px] text-muted-foreground">Gold tier</div>
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold text-foreground">Most generous</div>
+              <div className="truncate text-[11px] text-muted-foreground">Paid the most overall</div>
             </div>
           </div>
-          <span className="text-sm font-semibold text-primary">₹12,400</span>
+          <span className="shrink-0 text-sm font-semibold tabular-nums text-primary">
+            {formatMoneyCompact(12400)}
+          </span>
         </div>
       </div>
     ),
   };
 
   return (
-    <div className="relative bg-card border border-border rounded-2xl shadow-xl overflow-hidden">
-      <div className="h-10 border-b border-border flex items-center px-4 justify-between bg-secondary/40">
+    <div className="relative overflow-hidden rounded-2xl border bg-card shadow-raised">
+      <div className="flex h-10 items-center justify-between border-b bg-secondary/40 px-4" aria-hidden="true">
         <div className="flex gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-destructive/40" />
-          <div className="w-2.5 h-2.5 rounded-full bg-amber-400/50" />
-          <div className="w-2.5 h-2.5 rounded-full bg-accent/40" />
+          <div className="h-2.5 w-2.5 rounded-full bg-destructive/40" />
+          <div className="h-2.5 w-2.5 rounded-full bg-amber-400/50" />
+          <div className="h-2.5 w-2.5 rounded-full bg-success/40" />
         </div>
-        <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-          <ShieldCheck size={10} /> expensewaale.app
-        </div>
+        <div className="text-[11px] font-medium text-muted-foreground">ExpenseWaale</div>
       </div>
 
-      <div className="flex p-2 gap-1 bg-secondary/30">
-        {(
-          [
-            { id: "spaces", label: "Spaces" },
-            { id: "settlements", label: "Settlements" },
-            { id: "badges", label: "Badges" },
-          ] as const
-        ).map((t) => (
+      <div className="flex gap-1 bg-secondary/30 p-2" role="group" aria-label="Preview screens">
+        {MOCK_TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setActiveTab(t.id)}
+            type="button"
+            aria-pressed={activeTab === t.id}
+            onClick={() => {
+              setAutoPlay(false);
+              setActiveTab(t.id);
+            }}
             className={cn(
-              "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
+              "min-h-10 flex-1 rounded-md px-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               activeTab === t.id
                 ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-secondary"
+                : "text-muted-foreground hover:bg-secondary hover:text-foreground"
             )}
           >
             {t.label}
@@ -384,22 +707,31 @@ const MockScreen = () => {
         ))}
       </div>
 
-      <div className="p-5 min-h-[260px]">{content[activeTab]}</div>
+      <div className="min-h-[260px] p-4 sm:p-5">{content[activeTab]}</div>
 
-      <div className="p-3 border-t border-border bg-secondary/30 flex justify-between items-center">
-        <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-          Live sync
-        </div>
-        <div className="text-sm font-semibold text-primary">₹24,590.00</div>
+      <div className="flex items-center justify-between border-t bg-secondary/30 p-3 text-xs">
+        <span className="text-muted-foreground">Spent this month</span>
+        <span className="text-sm font-semibold tabular-nums text-foreground">
+          {formatMoneyCompact(24590)}
+        </span>
       </div>
     </div>
   );
 };
 
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
+
+const TRUST_POINTS = [
+  "Free, no card needed",
+  "Your people don't need an account",
+  "Works on your phone",
+];
+
 const Auth = () => {
   const [authOpen, setAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authMode, setAuthMode] = useState<AuthMode>("signin");
   const [scrolled, setScrolled] = useState(false);
   const navigate = useNavigate();
 
@@ -412,391 +744,260 @@ const Auth = () => {
     };
     checkUser();
     const handleScroll = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", handleScroll);
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, [navigate]);
 
-  const openAuth = (mode: "signin" | "signup") => {
+  const openAuth = (mode: AuthMode) => {
     setAuthMode(mode);
     setAuthOpen(true);
   };
 
+  const scrollToSection = (id: string) =>
+    document
+      .getElementById(id)
+      ?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/20 overflow-x-hidden">
+    <div className="min-h-screen overflow-x-hidden bg-background font-sans text-foreground">
       {/* Navbar */}
-      <nav
+      <header
         className={cn(
-          "fixed w-full z-40 transition-all duration-300",
-          scrolled
-            ? "bg-background/85 backdrop-blur-md border-b border-border py-3"
-            : "py-5"
+          "fixed inset-x-0 top-0 z-40 transition-colors duration-150",
+          scrolled ? "border-b bg-background/90 backdrop-blur-md" : "border-b border-transparent"
         )}
       >
-        <div className="container mx-auto px-4 sm:px-6 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center shadow-sm">
-              <Wallet className="text-primary-foreground" size={18} />
-            </div>
-            <span className="text-lg sm:text-xl font-bold tracking-tight">
-              ExpenseWaale
+        <div className={cn(WRAP, "flex h-16 items-center justify-between gap-3")}>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground sm:h-9 sm:w-9">
+              <Wallet size={18} aria-hidden="true" />
             </span>
+            <span className="truncate text-base font-bold tracking-tight sm:text-xl">ExpenseWaale</span>
           </div>
 
-          <div className="hidden md:flex items-center gap-7 text-sm font-medium text-muted-foreground">
-            <a href="#features" className="hover:text-foreground transition-colors">
+          <nav
+            className="hidden items-center gap-7 text-sm font-medium text-muted-foreground md:flex"
+            aria-label="Page sections"
+          >
+            <a href="#features" className="transition-colors hover:text-foreground">
               Features
             </a>
-            <a
-              href="#how-it-works"
-              className="hover:text-foreground transition-colors"
-            >
+            <a href="#how-it-works" className="transition-colors hover:text-foreground">
               How it works
             </a>
-          </div>
+          </nav>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => openAuth("signin")}
-              className="hidden sm:inline-flex"
-            >
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+            <Button variant="ghost" size="sm" className="h-10 px-3" onClick={() => openAuth("signin")}>
               Sign in
             </Button>
-            <Button onClick={() => openAuth("signup")} size="sm">
+            <Button size="sm" className="h-10 px-3 sm:px-4" onClick={() => openAuth("signup")}>
               Get started
             </Button>
           </div>
         </div>
-      </nav>
+      </header>
 
-      {/* Hero */}
-      <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 overflow-hidden">
-        {/* Soft warm decorative blobs */}
-        <div className="absolute top-[-15%] left-[5%] w-[420px] h-[420px] bg-primary/15 blur-[110px] rounded-full pointer-events-none" />
-        <div className="absolute top-[25%] right-[0%] w-[360px] h-[360px] bg-accent/12 blur-[100px] rounded-full pointer-events-none" />
-        <div className="absolute bottom-[-10%] left-[40%] w-[300px] h-[300px] bg-amber-300/15 blur-[90px] rounded-full pointer-events-none" />
+      <main>
+        {/* Hero */}
+        <section className="relative overflow-hidden pb-16 pt-28 sm:pb-24 sm:pt-36">
+          {/* Subtle dotted grid */}
+          <div
+            className="pointer-events-none absolute inset-0 opacity-50"
+            aria-hidden="true"
+            style={{
+              backgroundImage: "radial-gradient(circle, hsl(var(--border)) 1px, transparent 1px)",
+              backgroundSize: "28px 28px",
+              maskImage: "radial-gradient(ellipse at center, black 30%, transparent 75%)",
+              WebkitMaskImage: "radial-gradient(ellipse at center, black 30%, transparent 75%)",
+            }}
+          />
 
-        {/* Subtle dotted grid */}
-        <div
-          className="absolute inset-0 opacity-[0.4] pointer-events-none"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle, hsl(35 15% 80%) 1px, transparent 1px)",
-            backgroundSize: "28px 28px",
-            maskImage:
-              "radial-gradient(ellipse at center, black 30%, transparent 75%)",
-            WebkitMaskImage:
-              "radial-gradient(ellipse at center, black 30%, transparent 75%)",
-          }}
-        />
-
-        <div className="container mx-auto px-4 sm:px-6 relative z-10">
-          <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
-            <div className="flex-1 text-center lg:text-left">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold mb-6">
-                <Sparkles size={12} />
-                <span className="tracking-wide">V2.0 IS LIVE</span>
-                <span className="w-px h-3 bg-primary/30 mx-1" />
-                <span className="text-muted-foreground">Join 2,000+ users</span>
-              </div>
-
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.05] mb-6 tracking-tight">
-                Splitting bills{" "}
-                <span className="relative inline-block">
-                  <span className="gradient-text">made&nbsp;easy.</span>
-                  <svg
-                    className="absolute -bottom-2 left-0 w-full"
-                    viewBox="0 0 200 8"
-                    preserveAspectRatio="none"
-                    aria-hidden
-                  >
-                    <path
-                      d="M2 5 Q 50 1, 100 4 T 198 4"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      fill="none"
-                      opacity="0.6"
-                    />
-                  </svg>
-                </span>
-              </h1>
-
-              <p className="text-base sm:text-lg text-muted-foreground mb-8 max-w-xl mx-auto lg:mx-0 leading-relaxed">
-                Stop using spreadsheets. ExpenseWaale organizes shared costs,
-                settles debts instantly, and keeps friendships drama-free.
-              </p>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 justify-center lg:justify-start">
-                <Button
-                  onClick={() => openAuth("signup")}
-                  size="lg"
-                  className="text-base px-7 shadow-md shadow-primary/20"
-                >
-                  Start splitting free
-                  <ArrowRight size={18} className="ml-1" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="lg"
-                  onClick={() =>
-                    document
-                      .getElementById("features")
-                      ?.scrollIntoView({ behavior: "smooth" })
-                  }
-                  className="text-base px-7"
-                >
-                  See how it works
-                </Button>
-              </div>
-
-              {/* Social proof: avatar stack + rating */}
-              <div className="mt-8 flex items-center justify-center lg:justify-start gap-4 flex-wrap">
-                <div className="flex -space-x-2">
-                  {["A", "R", "P", "S", "M"].map((c, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        "w-9 h-9 rounded-full border-2 border-background flex items-center justify-center text-xs font-bold",
-                        ["bg-rose-200 text-rose-800",
-                          "bg-amber-200 text-amber-900",
-                          "bg-emerald-200 text-emerald-800",
-                          "bg-sky-200 text-sky-800",
-                          "bg-violet-200 text-violet-800"][i]
-                      )}
-                    >
-                      {c}
-                    </div>
-                  ))}
-                </div>
-                <div className="text-left">
-                  <div className="flex items-center gap-1">
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <Star key={i} size={14} className="fill-amber-400 text-amber-400" />
-                    ))}
-                    <span className="text-xs font-semibold ml-1">4.9</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Loved by 2,000+ flatmates
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-10 grid grid-cols-3 gap-4 sm:gap-8 max-w-md mx-auto lg:mx-0 border-t border-border pt-6">
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold gradient-text">
-                    ₹10L+
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">Tracked</div>
-                </div>
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold gradient-text">
-                    0₹
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">In fees</div>
-                </div>
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold gradient-text">
-                    100%
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">Free</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 w-full max-w-md lg:max-w-lg relative">
-              {/* Floating decorative cards */}
-              <div className="hidden sm:block absolute -top-6 -left-4 z-20 animate-in fade-in slide-in-from-left-4 duration-700">
-                <div className="bg-card border border-border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-lg bg-accent/15 text-accent flex items-center justify-center">
-                    <Check className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-muted-foreground">
-                      Settled
-                    </div>
-                    <div className="text-sm font-bold">You paid ₹450</div>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                className="hidden sm:block absolute -bottom-4 -right-2 z-20 animate-in fade-in slide-in-from-right-4 duration-700"
-                style={{ animationDelay: "200ms" }}
-              >
-                <div className="bg-card border border-border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center">
-                    <Pizza className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-muted-foreground">
-                      New expense
-                    </div>
-                    <div className="text-sm font-bold">Pizza Night ₹1,200</div>
-                  </div>
-                </div>
-              </div>
-
-              <MockScreen />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section
-        id="features"
-        className="py-16 sm:py-24 bg-secondary/40 border-t border-border"
-      >
-        <div className="container mx-auto px-4 sm:px-6">
-          <div className="text-center max-w-2xl mx-auto mb-12">
-            <h2 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
-              Everything you need to manage costs
-            </h2>
-            <p className="text-muted-foreground">
-              Powerful features wrapped in a simple, intuitive interface designed
-              for modern roommates and travel groups.
-            </p>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            <FeatureCard
-              icon={Users}
-              title="Split Spaces"
-              description="Create separate contexts for your apartment, office team, or vacation. Keeps your finances organized."
-              badge="Core"
-              tone="primary"
-            />
-            <FeatureCard
-              icon={Receipt}
-              title="Smart Expenses"
-              description="Add expenses with custom categories. Split by percentage, shares, or equally. We handle the math."
-              tone="amber"
-            />
-            <FeatureCard
-              icon={Check}
-              title="Auto Settlements"
-              description="Our algorithm calculates the minimum number of transactions needed to settle everyone up."
-              tone="accent"
-            />
-            <FeatureCard
-              icon={TrendingUp}
-              title="Deep Analytics"
-              description="Visual spending trends, category breakdowns, and fairness scores to see who's carrying the team."
-              badge="Pro"
-              tone="sky"
-            />
-            <FeatureCard
-              icon={Trophy}
-              title="Fun Leaderboards"
-              description="Gamify spending with badges like Milk Bhai, Fuel King, or Silent Assassin. Make finance fun."
-              tone="rose"
-            />
-            <FeatureCard
-              icon={Mail}
-              title="PDF & Share"
-              description="Export detailed PDF reports or generate a public link to share the settlement summary instantly."
-              tone="violet"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section id="how-it-works" className="py-16 sm:py-24">
-        <div className="container mx-auto px-4 sm:px-6">
-          <div className="text-center max-w-xl mx-auto mb-12">
-            <h2 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
-              How it works
-            </h2>
-            <p className="text-muted-foreground">
-              Three steps from sign-up to your first settled split.
-            </p>
-          </div>
-          <div className="grid sm:grid-cols-3 gap-6 sm:gap-8 text-center max-w-4xl mx-auto">
-            {[
-              {
-                n: "1",
-                title: "Create a space",
-                body:
-                  "Sign up and instantly get a Default space. Add new ones for trips or events.",
-              },
-              {
-                n: "2",
-                title: "Add flatmates",
-                body:
-                  "Invite friends by name and email. They don't need an account to be tracked.",
-              },
-              {
-                n: "3",
-                title: "Track & settle",
-                body:
-                  "Log expenses as they happen. See who pays whom at month-end.",
-              },
-            ].map((s) => (
-              <div key={s.n} className="group">
-                <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xl font-bold mx-auto mb-4 border border-primary/20 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                  {s.n}
-                </div>
-                <h3 className="text-lg font-bold mb-2">{s.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {s.body}
+          <div className={cn(WRAP, "relative")}>
+            <div className="flex flex-col items-center gap-12 lg:flex-row lg:gap-16">
+              <div className="min-w-0 flex-1 text-center lg:text-left">
+                <p className="mb-6 inline-flex max-w-full items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                  For flats, trips and office lunches
                 </p>
+
+                <h1 className="mb-6 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
+                  Splitting bills{" "}
+                  <span className="relative inline-block text-primary">
+                    made&nbsp;easy.
+                    <svg
+                      className="absolute -bottom-2 left-0 w-full"
+                      viewBox="0 0 200 8"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M2 5 Q 50 1, 100 4 T 198 4"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        fill="none"
+                        opacity="0.5"
+                      />
+                    </svg>
+                  </span>
+                </h1>
+
+                <p className="mx-auto mb-8 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg lg:mx-0">
+                  Stop using spreadsheets. Log shared costs as they happen, split them between the
+                  people involved, and see exactly who pays whom when it's time to settle up.
+                </p>
+
+                <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center lg:justify-start">
+                  <Button onClick={() => openAuth("signup")} size="lg" className="px-7 text-base">
+                    Start splitting free
+                    <ArrowRight size={18} aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={() => scrollToSection("how-it-works")}
+                    className="px-7 text-base"
+                  >
+                    See how it works
+                  </Button>
+                </div>
+
+                <ul className="mx-auto mt-10 flex max-w-xl flex-wrap justify-center gap-x-6 gap-y-2 border-t pt-6 text-sm text-muted-foreground lg:mx-0 lg:justify-start">
+                  {TRUST_POINTS.map((point) => (
+                    <li key={point} className="flex items-center gap-1.5">
+                      <Check className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+                      {point}
+                    </li>
+                  ))}
+                </ul>
               </div>
-            ))}
+
+              <div className="relative w-full min-w-0 max-w-md flex-1 lg:max-w-lg">
+                {/* Floating sample cards */}
+                <div
+                  className="absolute -left-4 -top-6 z-20 hidden duration-700 animate-in fade-in slide-in-from-left-4 motion-reduce:animate-none sm:block"
+                  aria-hidden="true"
+                >
+                  <div className="flex items-center gap-2.5 rounded-xl border bg-card px-3 py-2 shadow-raised">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-credit-soft text-credit">
+                      <Check className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Marked as settled</div>
+                      <div className="text-sm font-bold">1 – 30 Sep</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* fill-mode-backwards keeps this card hidden during its delay instead of
+                    showing, vanishing and then fading in. */}
+                <div
+                  className="absolute -bottom-4 -right-2 z-20 hidden delay-200 duration-700 animate-in fade-in slide-in-from-right-4 fill-mode-backwards motion-reduce:animate-none sm:block"
+                  aria-hidden="true"
+                >
+                  <div className="flex items-center gap-2.5 rounded-xl border bg-card px-3 py-2 shadow-raised">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-100 text-rose-700">
+                      <Pizza className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Pizza night · split 4 ways
+                      </div>
+                      <div className="text-sm font-bold tabular-nums">
+                        {formatMoneyCompact(1200)}{" "}
+                        <span className="font-medium text-muted-foreground">
+                          · {formatMoneyCompact(300)} each
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <MockScreen />
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* CTA */}
-      <section className="pb-20">
-        <div className="container mx-auto px-4 sm:px-6">
-          <Card className="relative p-8 sm:p-14 text-center bg-gradient-to-br from-primary/12 via-card to-accent/12 border-primary/20 overflow-hidden">
-            {/* Decorative blur blobs */}
-            <div className="absolute top-0 right-0 w-72 h-72 bg-primary/15 blur-[80px] rounded-full pointer-events-none" />
-            <div className="absolute bottom-0 left-0 w-72 h-72 bg-accent/15 blur-[80px] rounded-full pointer-events-none" />
+        {/* Features */}
+        <section id="features" className="scroll-mt-16 border-t bg-secondary/40 py-16 sm:py-24">
+          <div className={WRAP}>
+            <div className="mx-auto mb-10 max-w-2xl text-center sm:mb-12">
+              <h2 className="mb-3 text-3xl font-bold tracking-tight sm:text-4xl">
+                Everything you need to share costs
+              </h2>
+              <p className="text-muted-foreground">
+                Add what you spend. ExpenseWaale works out each person's share, who owes whom and
+                the fewest payments to clear it.
+              </p>
+            </div>
 
-            <div className="relative z-10">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-background/80 backdrop-blur border border-border text-xs font-semibold mb-5">
-                <Sparkles size={12} className="text-primary" />
-                <span>Free forever — no credit card required</span>
-              </div>
-              <h2 className="text-3xl sm:text-5xl font-bold mb-4 tracking-tight max-w-3xl mx-auto leading-tight">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3">
+              {FEATURES.map((feature) => (
+                <FeatureCard key={feature.title} {...feature} />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* How it works */}
+        <section id="how-it-works" className="scroll-mt-16 py-16 sm:py-24">
+          <div className={WRAP}>
+            <div className="mx-auto mb-10 max-w-xl text-center sm:mb-12">
+              <h2 className="mb-3 text-3xl font-bold tracking-tight sm:text-4xl">How it works</h2>
+              <p className="text-muted-foreground">Three steps from sign-up to your first settle-up.</p>
+            </div>
+            <ol className="mx-auto grid max-w-4xl grid-cols-1 gap-8 text-center sm:grid-cols-3">
+              {STEPS.map((s) => (
+                <li key={s.n}>
+                  <div
+                    className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-xl font-bold text-primary"
+                    aria-hidden="true"
+                  >
+                    {s.n}
+                  </div>
+                  <h3 className="mb-2 text-lg font-bold">{s.title}</h3>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        {/* CTA */}
+        <section className="pb-20">
+          <div className={WRAP}>
+            <div className="rounded-2xl border border-primary/20 bg-primary/[0.06] px-5 py-10 text-center sm:p-14">
+              <p className="mb-5 inline-flex items-center rounded-full border bg-card px-3 py-1 text-xs font-semibold">
+                Free to use · no card needed
+              </p>
+              <h2 className="mx-auto mb-4 max-w-3xl text-3xl font-bold leading-tight tracking-tight sm:text-5xl">
                 Ready to stop arguing about money?
               </h2>
-              <p className="text-base sm:text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-                Join thousands of flatmates who use ExpenseWaale to keep their
-                finances — and their friendships — clean.
+              <p className="mx-auto mb-8 max-w-2xl text-base text-muted-foreground sm:text-lg">
+                Set up your group, add the first expense, and let ExpenseWaale keep the numbers
+                straight for everyone.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
-                <Button
-                  onClick={() => openAuth("signup")}
-                  size="lg"
-                  className="px-8 shadow-lg shadow-primary/20"
-                >
+              <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+                <Button onClick={() => openAuth("signup")} size="lg" className="px-8">
                   Create free account
-                  <ArrowRight size={18} className="ml-1" />
+                  <ArrowRight size={18} aria-hidden="true" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="lg"
-                  onClick={() => openAuth("signin")}
-                  className="px-6"
-                >
+                <Button variant="ghost" size="lg" onClick={() => openAuth("signin")} className="px-6">
                   I already have an account
                 </Button>
               </div>
             </div>
-          </Card>
-        </div>
-      </section>
+          </div>
+        </section>
+      </main>
 
       {/* Footer */}
-      <footer className="py-8 border-t border-border bg-secondary/30">
-        <div className="container mx-auto px-4 sm:px-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm">
+      <footer className="border-t bg-secondary/30 py-8">
+        <div className={cn(WRAP, "flex flex-col items-center justify-between gap-4 text-sm sm:flex-row")}>
           <div className="flex items-center gap-2">
-            <Wallet className="text-primary" size={18} />
+            <Wallet className="text-primary" size={18} aria-hidden="true" />
             <span className="font-bold text-foreground">ExpenseWaale</span>
           </div>
           <div className="text-muted-foreground">
@@ -805,11 +1006,7 @@ const Auth = () => {
         </div>
       </footer>
 
-      <AuthModal
-        isOpen={authOpen}
-        onClose={() => setAuthOpen(false)}
-        initialMode={authMode}
-      />
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} initialMode={authMode} />
     </div>
   );
 };
