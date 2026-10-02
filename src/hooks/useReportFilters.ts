@@ -42,28 +42,36 @@ const defaultState: ReportFiltersState = {
   },
 };
 
-export const useReportFilters = () => {
+interface UseReportFiltersOptions {
+  /** Start on this date range instead of the stored one (e.g. a hand-off from Home). */
+  initialDateRange?: DateRange;
+}
+
+export const useReportFilters = (options: UseReportFiltersOptions = {}) => {
   const [state, setState] = useState<ReportFiltersState>(() => {
-    // Load from localStorage on init
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          return {
-            peopleFilters: parsed.peopleFilters || defaultState.peopleFilters,
-            categoryFilters: parsed.categoryFilters || defaultState.categoryFilters,
-            dateRange: {
-              from: parsed.dateRange?.from ? new Date(parsed.dateRange.from) : defaultState.dateRange.from,
-              to: parsed.dateRange?.to ? new Date(parsed.dateRange.to) : defaultState.dateRange.to,
-            },
-          };
-        } catch (error) {
-          console.error("Error parsing stored filters:", error);
+    const loaded = (() => {
+      // Load from localStorage on init
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            return {
+              peopleFilters: { ...defaultState.peopleFilters, ...(parsed.peopleFilters || {}) },
+              categoryFilters: parsed.categoryFilters || defaultState.categoryFilters,
+              dateRange: {
+                from: parsed.dateRange?.from ? new Date(parsed.dateRange.from) : defaultState.dateRange.from,
+                to: parsed.dateRange?.to ? new Date(parsed.dateRange.to) : defaultState.dateRange.to,
+              },
+            };
+          } catch (error) {
+            console.error("Error parsing stored filters:", error);
+          }
         }
       }
-    }
-    return defaultState;
+      return defaultState;
+    })();
+    return options.initialDateRange ? { ...loaded, dateRange: options.initialDateRange } : loaded;
   });
 
   // Save to localStorage whenever state changes

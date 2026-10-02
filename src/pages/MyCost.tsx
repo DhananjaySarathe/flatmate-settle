@@ -42,6 +42,11 @@ import {
   pdfAmount,
 } from "@/lib/pdfStyle";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
+import { PageHeader, Panel, SkeletonRows } from "@/components/PageHeader";
+import { PeriodPicker } from "@/components/PeriodPicker";
+import { PersonAvatar } from "@/components/PersonAvatar";
+import { CategoryFilterSection } from "@/components/CategoryFilterChips";
+import { formatMoney, formatRange, monthRanges, parseDay, sameRange } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -430,8 +435,8 @@ export default function MyCost() {
       if (settlement) {
         applySettlementRange(
           settlement.id,
-          new Date(settlement.from_date),
-          new Date(settlement.to_date)
+          parseDay(settlement.from_date),
+          parseDay(settlement.to_date)
         );
       }
     }
@@ -512,410 +517,180 @@ export default function MyCost() {
     }
   };
 
+  const { thisMonth, lastMonth } = monthRanges();
+  const isCustom = datePreset === "custom";
+  const onThisMonth = isCustom && sameRange(dateRange, thisMonth);
+  const onLastMonth = isCustom && sameRange(dateRange, lastMonth);
+  const settlementValue = datePreset.startsWith("settlement:") ? datePreset : undefined;
+  const activeCategoryFilters = categoryFilters.include.length + categoryFilters.exclude.length;
+
   if (!selectedSplitSpace && splitSpaces.length > 0) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div>
+        <PageHeader title="Cost per person" />
+        <Panel>
+          <p className="py-2 text-sm text-muted-foreground">Pick a space from the switcher to see costs.</p>
+        </Panel>
       </div>
     );
   }
 
   const totalCost = personCosts.reduce((sum, p) => sum + p.totalCost, 0);
+  const maxCost = Math.max(0.01, ...personCosts.map((p) => p.totalCost));
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">My Cost</h1>
-          {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
-              <span className="hidden sm:inline">SplitSpace: </span>
-              {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {categories.length > 0 && (
-            <Dialog
-              open={filtersModalOpen}
-              onOpenChange={setFiltersModalOpen}
-            >
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <Filter className="w-4 h-4" />
-                  Filters
-                  {(categoryFilters.include.length > 0 ||
-                    categoryFilters.exclude.length > 0) && (
-                    <Badge
-                      variant="secondary"
-                      className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
-                    >
-                      {categoryFilters.include.length +
-                        categoryFilters.exclude.length}
-                    </Badge>
-                  )}
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Filter className="w-5 h-5" />
-                    Category Filters
-                  </DialogTitle>
-                  <DialogDescription>
-                    Filter expenses by categories to calculate costs
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="mt-4 space-y-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Include Categories</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <Label className="text-sm font-medium">
-                        Show only expenses in these categories
-                      </Label>
-                      <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                        {categories.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No categories available
-                          </p>
-                        ) : (
-                          categories.map((category) => (
-                            <div
-                              key={category.id}
-                              className="flex items-center space-x-2"
-                            >
-                              <Checkbox
-                                id={`include-${category.id}`}
-                                checked={categoryFilters.include.includes(
-                                  category.id
-                                )}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      include: [
-                                        ...categoryFilters.include,
-                                        category.id,
-                                      ],
-                                    });
-                                  } else {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      include: categoryFilters.include.filter(
-                                        (id) => id !== category.id
-                                      ),
-                                    });
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`include-${category.id}`}
-                                className="text-sm font-normal cursor-pointer flex-1"
-                              >
-                                {category.name}
-                              </Label>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Separator />
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Exclude Categories</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <Label className="text-sm font-medium">
-                        Hide expenses in these categories
-                      </Label>
-                      <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                        {categories.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No categories available
-                          </p>
-                        ) : (
-                          categories.map((category) => (
-                            <div
-                              key={category.id}
-                              className="flex items-center space-x-2"
-                            >
-                              <Checkbox
-                                id={`exclude-${category.id}`}
-                                checked={categoryFilters.exclude.includes(
-                                  category.id
-                                )}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      exclude: [
-                                        ...categoryFilters.exclude,
-                                        category.id,
-                                      ],
-                                    });
-                                  } else {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      exclude: categoryFilters.exclude.filter(
-                                        (id) => id !== category.id
-                                      ),
-                                    });
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`exclude-${category.id}`}
-                                className="text-sm font-normal cursor-pointer flex-1"
-                              >
-                                {category.name}
-                              </Label>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      resetFilters();
-                    }}
-                  >
-                    <X className="w-4 h-4 mr-2" />
-                    Reset Filters
-                  </Button>
-                  <Button onClick={() => setFiltersModalOpen(false)}>
-                    Apply Filters
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          )}
+    <div className="space-y-5">
+      <PageHeader
+        className="mb-1 lg:mb-2"
+        title="Cost per person"
+        description={`What each person's share of the spending came to · ${getPeriodLabel()}`}
+        actions={
           <Button
             onClick={generatePDF}
-            disabled={pdfLoading || personCosts.length === 0}
-            className="gap-2"
+            disabled={pdfLoading || loading || personCosts.length === 0}
+            variant="outline"
+            className="bg-card"
           >
-            {pdfLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Download className="w-4 h-4" />
-                Download PDF
-              </>
-            )}
+            {pdfLoading ? <Loader2 className="animate-spin" /> : <Download />}
+            Download PDF
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Select Date Range</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Period</Label>
-            <Select value={datePreset} onValueChange={handleDatePresetChange}>
-              <SelectTrigger className="w-full sm:w-[320px]">
-                <SelectValue placeholder="Select period" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all-time">All time</SelectItem>
-                <SelectItem value="custom">Custom range</SelectItem>
-                {savedSettlements.length > 0 && (
-                  <>
-                    <SelectSeparator />
-                    <SelectGroup>
-                      <SelectLabel className="flex items-center gap-1.5">
-                        <Bookmark className="w-3.5 h-3.5" />
-                        Past settlements
-                      </SelectLabel>
-                      {savedSettlements.map((settlement) => (
-                        <SelectItem
-                          key={settlement.id}
-                          value={`settlement:${settlement.id}`}
-                        >
-                          {format(new Date(settlement.from_date), "MMM d")} –{" "}
-                          {format(new Date(settlement.to_date), "MMM d, yyyy")}
-                          {settlement.note ? ` · ${settlement.note}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
+      <PeriodPicker
+        chips={[
+          {
+            key: "all-time",
+            label: "All time",
+            active: datePreset === "all-time",
+            onSelect: () => setDatePreset("all-time"),
+          },
+          { key: "this-month", label: "This month", active: onThisMonth, onSelect: () => setDateRange(thisMonth) },
+          { key: "last-month", label: "Last month", active: onLastMonth, onSelect: () => setDateRange(lastMonth) },
+        ]}
+        range={dateRange}
+        onCustomRange={setDateRange}
+        customActive={isCustom && !onThisMonth && !onLastMonth}
+        trailing={
+          <>
+            {savedSettlements.length > 0 && (
+              <Select value={settlementValue} onValueChange={handleDatePresetChange}>
+                <SelectTrigger
+                  className={cn(
+                    "h-9 w-auto gap-1.5 rounded-full px-3.5",
+                    settlementValue ? "border-foreground bg-foreground text-background" : "bg-card"
+                  )}
+                  aria-label="Load a past settle-up period"
+                >
+                  <Bookmark className="h-3.5 w-3.5" />
+                  <SelectValue placeholder="Past settle-ups" />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {savedSettlements.map((settlement) => (
+                    <SelectItem key={settlement.id} value={`settlement:${settlement.id}`}>
+                      {formatRange(parseDay(settlement.from_date), parseDay(settlement.to_date))}
+                      {settlement.note ? ` · ${settlement.note}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {categories.length > 0 && (
+              <Dialog open={filtersModalOpen} onOpenChange={setFiltersModalOpen}>
+                <DialogTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      activeCategoryFilters > 0
+                        ? "border-primary bg-primary/10 font-medium text-primary"
+                        : "border-border bg-card hover:border-foreground/30 hover:bg-secondary"
+                    )}
+                  >
+                    <Filter className="h-3.5 w-3.5" />
+                    Categories
+                    {activeCategoryFilters > 0 && (
+                      <span className="money rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                        {activeCategoryFilters}
+                      </span>
+                    )}
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Filter by category</DialogTitle>
+                    <DialogDescription>
+                      Work out each person's share for just some kinds of spending.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <CategoryFilterSection
+                    categories={categories}
+                    categoryFilters={categoryFilters}
+                    setCategoryFilters={setCategoryFilters}
+                  />
+                  <div className="mt-2 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                    <Button variant="outline" onClick={resetFilters} disabled={activeCategoryFilters === 0}>
+                      <X />
+                      Clear
+                    </Button>
+                    <Button onClick={() => setFiltersModalOpen(false)}>Done</Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+          </>
+        }
+      />
 
-          {datePreset === "all-time" ? (
-            <p className="text-sm text-muted-foreground">
-              Showing costs across all expenses in this split space.
+      {loading ? (
+        <Panel>
+          <SkeletonRows rows={4} />
+        </Panel>
+      ) : personCosts.length === 0 || expenses.length === 0 ? (
+        <Panel>
+          <div className="py-2">
+            <p className="font-medium">No expenses in this period</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {activeCategoryFilters > 0
+                ? "Nothing matches the selected categories. Try clearing the filter."
+                : "Pick a different period, or add expenses to see each person's share."}
             </p>
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full sm:w-[240px] justify-start text-left font-normal",
-                      !dateRange.from && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                    <span className="truncate">
-                      {format(dateRange.from, "PPP")}
+          </div>
+        </Panel>
+      ) : (
+        <Panel
+          title="Each person's share"
+          description={`${formatMoney(totalCost)} across ${expenses.length} expense${
+            expenses.length === 1 ? "" : "s"
+          } · average ${formatMoney(personCosts.length > 0 ? totalCost / personCosts.length : 0)} per person`}
+          bodyClassName="pt-1"
+        >
+          <ul className="divide-y divide-border/70">
+            {personCosts.map((personCost) => (
+              <li key={personCost.id} className="flex items-center gap-3 py-3">
+                <PersonAvatar name={personCost.name} seed={personCost.id} size="md" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="truncate font-medium">{personCost.name}</p>
+                    <p className="money shrink-0 font-semibold">{formatMoney(personCost.totalCost)}</p>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-3">
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                      <span
+                        className="block h-full rounded-full bg-primary/70"
+                        style={{ width: `${(personCost.totalCost / maxCost) * 100}%` }}
+                      />
                     </span>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dateRange.from}
-                    onSelect={(date) =>
-                      date && setDateRange({ ...dateRange, from: date })
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-
-              <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
-                to
-              </span>
-              <span className="text-muted-foreground text-center sm:hidden">
-                ↓
-              </span>
-
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full sm:w-[240px] justify-start text-left font-normal",
-                      !dateRange.to && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                    <span className="truncate">
-                      {format(dateRange.to, "PPP")}
+                    <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">
+                      in {personCost.expenseCount} expense{personCost.expenseCount === 1 ? "" : "s"}
                     </span>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dateRange.to}
-                    onSelect={(date) =>
-                      date && setDateRange({ ...dateRange, to: date })
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={resetDateFilters}
-              >
-                Reset to all time
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Cost Summary Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <DollarSign className="w-5 h-5" />
-            Cost Per Person
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">{getPeriodLabel()}</p>
-        </CardHeader>
-        <CardContent>
-          {personCosts.length === 0 ? (
-            <div className="text-center py-12">
-              <DollarSign className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">
-                No expenses found. Add expenses to see costs.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-                <table className="w-full border-collapse min-w-[600px] sm:min-w-0">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left p-2 text-xs sm:text-sm">Name</th>
-                      <th className="text-right p-2 text-xs sm:text-sm">
-                        Total Cost
-                      </th>
-                      <th className="text-center p-2 text-xs sm:text-sm">
-                        Expenses
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {personCosts.map((personCost) => (
-                      <tr key={personCost.id} className="border-b">
-                        <td className="p-2 font-medium text-sm sm:text-base">
-                          {personCost.name}
-                        </td>
-                        <td className="p-2 text-right font-semibold text-sm sm:text-base text-primary">
-                          ₹{personCost.totalCost.toFixed(2)}
-                        </td>
-                        <td className="p-2 text-center text-sm sm:text-base">
-                          {personCost.expenseCount}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-4 p-4 bg-secondary/30 rounded-lg border border-border/50">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <p className="font-bold text-lg">
-                    Total Cost: ₹{totalCost.toFixed(2)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Average per person: ₹
-                    {personCosts.length > 0
-                      ? (totalCost / personCosts.length).toFixed(2)
-                      : "0.00"}
-                  </p>
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
     </div>
   );
 }
-

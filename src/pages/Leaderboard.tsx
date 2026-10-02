@@ -31,6 +31,9 @@ import {
   pdfAmount,
 } from "@/lib/pdfStyle";
 import { format } from "date-fns";
+import { PageHeader, Panel, SkeletonRows } from "@/components/PageHeader";
+import { PersonAvatar } from "@/components/PersonAvatar";
+import { formatMoney } from "@/lib/format";
 
 interface Flatmate {
   id: string;
@@ -173,7 +176,7 @@ export default function Leaderboard() {
   const silentAssassin = personStats
     .filter((p) => p.expenseCount > 0)
     .sort((a, b) => a.totalPaid - b.totalPaid)[0];
-  const bigSpender = personStats.sort((a, b) => b.highestExpense - a.highestExpense)[0];
+  const bigSpender = [...personStats].sort((a, b) => b.highestExpense - a.highestExpense)[0];
 
   // Category-specific badges
   const getCategoryLeader = (categoryName: string) => {
@@ -262,60 +265,52 @@ export default function Leaderboard() {
 
   if (!selectedSplitSpace && splitSpaces.length > 0) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
+      <div>
+        <PageHeader title="Leaderboard" />
+        <Panel>
+          <p className="py-2 text-sm text-muted-foreground">Pick a space from the switcher to see the leaderboard.</p>
+        </Panel>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div>
+        <PageHeader title="Leaderboard" description="\u00a0" />
+        <Panel>
+          <SkeletonRows rows={4} />
+        </Panel>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1 flex items-center gap-2">
-            <Trophy className="w-7 h-7 sm:w-9 sm:h-9 text-amber-500" />
-            Leaderboard
-          </h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            Brag rights, fairly distributed.
+    <div className="space-y-5 sm:space-y-6">
+      <PageHeader
+        className="mb-1 lg:mb-2"
+        title="Leaderboard"
+        description={`Who's paid the most in ${selectedSplitSpace?.name ?? "this space"}, all time`}
+        actions={
+          <Button
+            onClick={generateLeaderboardPDF}
+            disabled={pdfLoading || personStats.length === 0}
+            variant="outline"
+            className="bg-card"
+          >
+            {pdfLoading ? <Loader2 className="animate-spin" /> : <Download />}
+            Download PDF
+          </Button>
+        }
+      />
+
+      {personStats.every((p) => p.expenseCount === 0) && (
+        <Panel>
+          <p className="py-2 text-sm text-muted-foreground">
+            No expenses yet. Rankings appear once people start paying for things.
           </p>
-          {selectedSplitSpace && (
-            <p className="text-xs text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        <Button
-          onClick={generateLeaderboardPDF}
-          disabled={pdfLoading}
-          variant="outline"
-          className="self-start sm:self-auto"
-        >
-          {pdfLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" />
-              Download PDF
-            </>
-          )}
-        </Button>
-      </div>
+        </Panel>
+      )}
 
       {/* Podium */}
       {topPayers.length > 0 && (
@@ -343,17 +338,14 @@ export default function Leaderboard() {
 
       {/* Fun Stats / Badges */}
       <div>
-        <h2 className="text-xl sm:text-2xl font-bold mb-3 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          Badges & Fun Stats
-        </h2>
+        <h2 className="mb-3 text-[15px] font-semibold tracking-tight">Badges</h2>
         <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {mostGenerous && (
             <BadgeCard
               icon={Heart}
               emoji="💖"
               title="Most Generous"
-              subtitle={`₹${mostGenerous.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })} paid in total`}
+              subtitle={`${formatMoney(mostGenerous.totalPaid, { whole: true })} paid in total`}
               name={mostGenerous.name}
               tone="rose"
             />
@@ -363,7 +355,7 @@ export default function Leaderboard() {
               icon={Award}
               emoji="🥷"
               title="Silent Assassin"
-              subtitle={`Only ₹${silentAssassin.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })} — still in the game`}
+              subtitle={`Only ${formatMoney(silentAssassin.totalPaid, { whole: true })} — still in the game`}
               name={silentAssassin.name}
               tone="slate"
             />
@@ -373,7 +365,7 @@ export default function Leaderboard() {
               icon={Flame}
               emoji="💥"
               title="Big Spender"
-              subtitle={`₹${bigSpender.highestExpense.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on a single expense`}
+              subtitle={`${formatMoney(bigSpender.highestExpense, { whole: true })} on a single expense`}
               name={bigSpender.name}
               tone="amber"
             />
@@ -383,7 +375,7 @@ export default function Leaderboard() {
               icon={ShoppingBasket}
               emoji="🥛"
               title="Milk Bhai"
-              subtitle={`₹${milkBhai.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on groceries`}
+              subtitle={`${formatMoney(milkBhai.total, { whole: true })} on groceries`}
               name={milkBhai.name}
               tone="accent"
             />
@@ -393,7 +385,7 @@ export default function Leaderboard() {
               icon={Fuel}
               emoji="⛽"
               title="Fuel King"
-              subtitle={`₹${fuelKing.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on fuel`}
+              subtitle={`${formatMoney(fuelKing.total, { whole: true })} on fuel`}
               name={fuelKing.name}
               tone="orange"
             />
@@ -403,7 +395,7 @@ export default function Leaderboard() {
               icon={Pizza}
               emoji="🍕"
               title="Foodie"
-              subtitle={`₹${foodie.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on food`}
+              subtitle={`${formatMoney(foodie.total, { whole: true })} on food`}
               name={foodie.name}
               tone="primary"
             />
@@ -413,10 +405,10 @@ export default function Leaderboard() {
 
       {/* Full rankings */}
       {personStats.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Full Rankings</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
+        <Card className="shadow-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[15px] font-semibold tracking-tight">Full rankings</CardTitle>
+            <p className="text-sm text-muted-foreground">
               Everyone, sorted by total paid
             </p>
           </CardHeader>
@@ -434,7 +426,7 @@ export default function Leaderboard() {
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <RankBadge rank={idx + 1} />
-                    <Avatar name={person.name} />
+                    <PersonAvatar name={person.name} seed={person.id} size="md" />
                     <div className="min-w-0">
                       <div className="font-semibold truncate">{person.name}</div>
                       <div className="text-xs text-muted-foreground">
@@ -444,11 +436,11 @@ export default function Leaderboard() {
                   </div>
                   <div className="text-right flex-shrink-0">
                     <div className="font-bold text-base sm:text-lg tabular-nums">
-                      ₹{person.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                      {formatMoney(person.totalPaid, { whole: true })}
                     </div>
                     {person.highestExpense > 0 && (
                       <div className="text-xs text-muted-foreground">
-                        Max ₹{person.highestExpense.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        Max {formatMoney(person.highestExpense, { whole: true })}
                       </div>
                     )}
                   </div>
@@ -503,19 +495,19 @@ function RankBadge({ rank }: { rank: number }) {
   if (rank === 1)
     return (
       <div className="w-8 h-8 rounded-full bg-amber-400 text-amber-950 flex items-center justify-center text-sm font-bold flex-shrink-0">
-        🥇
+        1
       </div>
     );
   if (rank === 2)
     return (
       <div className="w-8 h-8 rounded-full bg-slate-300 text-slate-800 flex items-center justify-center text-sm font-bold flex-shrink-0">
-        🥈
+        2
       </div>
     );
   if (rank === 3)
     return (
       <div className="w-8 h-8 rounded-full bg-orange-300 text-orange-900 flex items-center justify-center text-sm font-bold flex-shrink-0">
-        🥉
+        3
       </div>
     );
   return (
@@ -557,12 +549,12 @@ function PodiumStep({ place, person }: { place: 1 | 2 | 3; person: PersonStats }
     <div className="flex flex-col items-center">
       <div className="flex flex-col items-center mb-2 text-center">
         {config.icon}
-        <Avatar name={person.name} size="lg" />
+        <PersonAvatar name={person.name} seed={person.id} size="md" className="h-14 w-14 text-base" />
         <div className="font-bold text-sm sm:text-base mt-2 truncate max-w-full">
           {person.name}
         </div>
         <div className="text-xs sm:text-sm text-muted-foreground tabular-nums">
-          ₹{person.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+          {formatMoney(person.totalPaid, { whole: true })}
         </div>
         <div className="text-[10px] sm:text-xs text-muted-foreground">
           {person.expenseCount} expense{person.expenseCount !== 1 ? "s" : ""}
@@ -570,7 +562,7 @@ function PodiumStep({ place, person }: { place: 1 | 2 | 3; person: PersonStats }
       </div>
       <div
         className={cn(
-          "w-full rounded-t-lg border-t-2 border-x flex items-center justify-center",
+          "w-full rounded-t-lg border border-b-0 flex items-center justify-center",
           config.height,
           config.bg,
           config.border
@@ -599,7 +591,7 @@ function PodiumPlaceholder({ place }: { place: 2 | 3 }) {
       </div>
       <div
         className={cn(
-          "w-full rounded-t-lg border-t-2 border-x border-dashed border-muted-foreground/20 bg-secondary/30",
+          "w-full rounded-t-lg border border-b-0 border-dashed border-muted-foreground/20 bg-secondary/30",
           height
         )}
       />
@@ -666,31 +658,21 @@ function BadgeCard({
 }) {
   const t = BADGE_TONES[tone];
   return (
-    <Card
-      className={cn(
-        "transition-all hover:shadow-md hover:-translate-y-0.5 overflow-hidden border-2 border-transparent bg-gradient-to-br",
-        t.ring,
-        t.bg
-      )}
-    >
+    <Card className="overflow-hidden shadow-card">
       <CardContent className="p-4 sm:p-5">
         <div className="flex items-start gap-3">
           <div
             className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0",
-              t.iconBg
+              "w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0",
+              t.iconBg,
+              t.iconText
             )}
             aria-hidden
           >
-            <span>{emoji}</span>
+            <Icon className="w-5 h-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {title}
-              </p>
-              <Icon className={cn("w-3 h-3", t.iconText)} />
-            </div>
+            <p className="mb-0.5 text-xs font-medium text-muted-foreground">{title}</p>
             <p className="text-base sm:text-lg font-bold truncate">{name}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
           </div>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { ArrowRight, Receipt, User, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -111,7 +111,7 @@ export default function SharedMyCost({ snapshot }: Props) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+        <CardTitle className="flex items-center gap-2">
           <User className="w-4 h-4 sm:w-5 sm:h-5" />
           My Cost
         </CardTitle>
@@ -270,7 +270,7 @@ export default function SharedMyCost({ snapshot }: Props) {
                   {groupedByDate.map((g) => (
                     <div key={g.date} className="p-3">
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                        {format(new Date(g.date), "EEE, MMM d, yyyy")}
+                        {format(parseISO(g.date), "EEE, MMM d, yyyy")}
                       </p>
                       <ul className="space-y-2">
                         {g.rows.map((r, i) => (

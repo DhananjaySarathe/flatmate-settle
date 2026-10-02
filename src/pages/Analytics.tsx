@@ -22,7 +22,7 @@ import {
   Flame,
   Target,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, startOfDay, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
@@ -59,6 +59,9 @@ import { PeopleFilters } from "@/components/PeopleFilters";
 import { CategoryFilterSection } from "@/components/CategoryFilterChips";
 import { Badge } from "@/components/ui/badge";
 import { useReportFilters } from "@/hooks/useReportFilters";
+import { PageHeader, Panel, SkeletonRows } from "@/components/PageHeader";
+import { PeriodPicker } from "@/components/PeriodPicker";
+import { formatRange, monthRanges, parseDay, sameRange } from "@/lib/format";
 
 interface Flatmate {
   id: string;
@@ -115,72 +118,6 @@ export default function Analytics() {
     }
     fetchData();
   }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
-
-  // Apply filters to expenses
-  useEffect(() => {
-    let filteredExpenses = [...allExpenses];
-
-    // Apply people filters
-    if (peopleFilters.exactMatch.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return peopleFilters.exactMatch.every((id) =>
-          expenseFlatmateIds.includes(id)
-        );
-      });
-    }
-
-    if (peopleFilters.anyMatch.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return peopleFilters.anyMatch.some((id) =>
-          expenseFlatmateIds.includes(id)
-        );
-      });
-    }
-
-    if (peopleFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        const expenseFlatmateIds = expense.expense_splits.map(
-          (s) => s.flatmate_id
-        );
-        return !peopleFilters.exclude.some(
-          (id) => expenseFlatmateIds.includes(id) || expense.paid_by === id
-        );
-      });
-    }
-
-    if (peopleFilters.paidBy.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) =>
-        peopleFilters.paidBy.includes(expense.paid_by)
-      );
-    }
-
-    // Apply category filters
-    if (categoryFilters.include.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          expense.category_id &&
-          categoryFilters.include.includes(expense.category_id)
-        );
-      });
-    }
-
-    if (categoryFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          !expense.category_id ||
-          !categoryFilters.exclude.includes(expense.category_id)
-        );
-      });
-    }
-
-    setExpenses(filteredExpenses);
-  }, [allExpenses, peopleFilters, categoryFilters]);
 
   const fetchData = async () => {
     if (!selectedSplitSpace) return;
@@ -464,178 +401,131 @@ export default function Analytics() {
     }
   };
 
+  const today = startOfDay(new Date());
+  const { thisMonth, lastMonth } = monthRanges(today);
+  const presetChips = [
+    { key: "this-month", label: "This month", range: thisMonth },
+    { key: "last-month", label: "Last month", range: lastMonth },
+    { key: "last-90", label: "Last 90 days", range: { from: subDays(today, 89), to: today } },
+  ];
+  const activePreset = presetChips.find((p) => sameRange(p.range, dateRange))?.key;
+  const activeFilterCount =
+    peopleFilters.exactMatch.length +
+    peopleFilters.anyMatch.length +
+    peopleFilters.exclude.length +
+    peopleFilters.paidBy.length +
+    categoryFilters.include.length +
+    categoryFilters.exclude.length;
+
   if (!selectedSplitSpace && splitSpaces.length > 0) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div>
+        <PageHeader title="Analytics" />
+        <Panel>
+          <p className="py-2 text-sm text-muted-foreground">Pick a space from the switcher to see its spending.</p>
+        </Panel>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1">Analytics</h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            Spending patterns, trends, and fairness — at a glance.
-          </p>
-          {selectedSplitSpace && (
-            <p className="text-xs text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        <Button
-          onClick={generateAnalyticsSummaryPDF}
-          disabled={pdfLoading !== null}
-          variant="outline"
-          className="self-start sm:self-auto"
-        >
-          {pdfLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" />
-              Download PDF
-            </>
-          )}
-        </Button>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        className="mb-1 lg:mb-2"
+        title="Analytics"
+        description={`Where the money goes in ${selectedSplitSpace?.name ?? "this space"} · ${formatRange(
+          dateRange.from,
+          dateRange.to
+        )}`}
+        actions={
+          <Button
+            onClick={generateAnalyticsSummaryPDF}
+            disabled={pdfLoading !== null || loading}
+            variant="outline"
+            className="bg-card"
+          >
+            {pdfLoading ? <Loader2 className="animate-spin" /> : <Download />}
+            Download PDF
+          </Button>
+        }
+      />
 
-      {/* Date Range */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Select Date Range</CardTitle>
-            {flatmates.length > 0 && (
-              <Dialog
-                open={filtersModalOpen}
-                onOpenChange={setFiltersModalOpen}
-              >
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <Filter className="w-4 h-4" />
-                    Filters
-                    {(peopleFilters.exactMatch.length > 0 ||
-                      peopleFilters.anyMatch.length > 0 ||
-                      peopleFilters.exclude.length > 0 ||
-                      peopleFilters.paidBy.length > 0 ||
-                      categoryFilters.include.length > 0 ||
-                      categoryFilters.exclude.length > 0) && (
-                      <Badge
-                        variant="secondary"
-                        className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
-                      >
-                        {peopleFilters.exactMatch.length +
-                          peopleFilters.anyMatch.length +
-                          peopleFilters.exclude.length +
-                          peopleFilters.paidBy.length +
-                          categoryFilters.include.length +
-                          categoryFilters.exclude.length}
-                      </Badge>
-                    )}
+      <PeriodPicker
+        chips={presetChips.map((p) => ({
+          key: p.key,
+          label: p.label,
+          active: activePreset === p.key,
+          onSelect: () => setDateRange(p.range),
+        }))}
+        range={dateRange}
+        onCustomRange={setDateRange}
+        customActive={!activePreset}
+        trailing={
+          flatmates.length > 0 && (
+            <Dialog open={filtersModalOpen} onOpenChange={setFiltersModalOpen}>
+              <DialogTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    activeFilterCount > 0
+                      ? "border-primary bg-primary/10 font-medium text-primary"
+                      : "border-border bg-card hover:border-foreground/30 hover:bg-secondary"
+                  )}
+                >
+                  <Filter className="h-3.5 w-3.5" />
+                  Filters
+                  {activeFilterCount > 0 && (
+                    <span className="money rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </button>
+              </DialogTrigger>
+              <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Filter analytics</DialogTitle>
+                  <DialogDescription>
+                    Narrow down what you're analysing. Filters are shared with Settle up.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="mt-2 space-y-6">
+                  <PeopleFilters flatmates={flatmates} value={peopleFilters} onFiltersChange={setPeopleFilters} />
+                  <Separator />
+                  <CategoryFilterSection
+                    categories={categories}
+                    categoryFilters={categoryFilters}
+                    setCategoryFilters={setCategoryFilters}
+                  />
+                </div>
+
+                <div className="mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setPeopleFilters({ exactMatch: [], anyMatch: [], exclude: [], paidBy: [] });
+                      setCategoryFilters({ include: [], exclude: [] });
+                    }}
+                    disabled={activeFilterCount === 0}
+                  >
+                    <X />
+                    Clear filters
                   </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <Filter className="w-5 h-5 text-primary" />
-                      Filters
-                    </DialogTitle>
-                    <DialogDescription>
-                      Narrow down what you're analyzing.
-                    </DialogDescription>
-                  </DialogHeader>
+                  <Button onClick={() => setFiltersModalOpen(false)}>Done</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )
+        }
+      />
 
-                  <div className="space-y-6 mt-2">
-                    <PeopleFilters
-                      flatmates={flatmates}
-                      onFiltersChange={setPeopleFilters}
-                    />
-
-                    <Separator />
-
-                    <CategoryFilterSection
-                      categories={categories}
-                      categoryFilters={categoryFilters}
-                      setCategoryFilters={setCategoryFilters}
-                    />
-                  </div>
-
-                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-6 pt-4 border-t">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        resetFilters();
-                      }}
-                    >
-                      <X className="w-4 h-4 mr-2" />
-                      Reset all
-                    </Button>
-                    <Button onClick={() => setFiltersModalOpen(false)}>
-                      Apply
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-[240px] justify-start text-left font-normal">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {format(dateRange.from, "PPP")}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.from}
-                  onSelect={(date) => date && setDateRange({ ...dateRange, from: date })}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-            <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">to</span>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-[240px] justify-start text-left font-normal">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {format(dateRange.to, "PPP")}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.to}
-                  onSelect={(date) => date && setDateRange({ ...dateRange, to: date })}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-        </CardContent>
-      </Card>
-
+      {loading ? (
+        <Panel>
+          <SkeletonRows rows={5} />
+        </Panel>
+      ) : (
+      <>
       {/* Key Metrics */}
       <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -668,7 +558,7 @@ export default function Analytics() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-primary" />
+                <TrendingUp className="w-4 h-4 text-primary" />
                 Expense Trends
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
@@ -710,7 +600,7 @@ export default function Analytics() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-primary" />
+            <Target className="w-4 h-4 text-primary" />
             Category Breakdown
           </CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
@@ -746,7 +636,7 @@ export default function Analytics() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Flame className="w-5 h-5 text-primary" />
+              <Flame className="w-4 h-4 text-primary" />
               Top 5 Most Expensive Days
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-1">
@@ -778,7 +668,7 @@ export default function Analytics() {
                     </div>
                     <div className="min-w-0">
                       <div className="font-semibold text-sm sm:text-base">
-                        {format(new Date(day.date), "EEE, MMM d, yyyy")}
+                        {format(parseDay(day.date), "EEE, MMM d, yyyy")}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {day.count} expense{day.count !== 1 ? "s" : ""}
@@ -795,6 +685,8 @@ export default function Analytics() {
             </div>
           </CardContent>
         </Card>
+      )}
+      </>
       )}
     </div>
   );

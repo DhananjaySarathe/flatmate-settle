@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -23,8 +24,10 @@ import {
   Share2,
   Trash2,
   Link as LinkIcon,
+  ArrowRight,
+  CheckCircle2,
 } from "lucide-react";
-import { format } from "date-fns";
+import { addDays, format, isSameDay, startOfDay } from "date-fns";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -73,6 +76,32 @@ import {
   createPdfDoc,
   pdfAmount,
 } from "@/lib/pdfStyle";
+import { PageHeader, Panel, SkeletonRows } from "@/components/PageHeader";
+import { PeriodPicker } from "@/components/PeriodPicker";
+import { PersonAvatar } from "@/components/PersonAvatar";
+import { ExpenseRow } from "@/components/ExpenseRow";
+import { useExpenseComposer } from "@/contexts/expense-composer";
+import {
+  EPSILON,
+  formatDay,
+  formatMoney,
+  formatRange,
+  monthRanges,
+  parseDay,
+  plural,
+  sameRange,
+  type DayRange,
+} from "@/lib/format";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Flatmate {
   id: string;
@@ -123,6 +152,13 @@ export default function Reports() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [balances, setBalances] = useState<Balance[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Home's "Settle up" button hands over the open period in navigation state.
+  const [handoffRange] = useState(() => {
+    const range = (location.state as { range?: { from: string; to: string } } | null)?.range;
+    return range ? { from: new Date(range.from), to: new Date(range.to) } : undefined;
+  });
   const {
     dateRange,
     peopleFilters,
@@ -131,7 +167,7 @@ export default function Reports() {
     setPeopleFilters,
     setCategoryFilters,
     resetFilters,
-  } = useReportFilters();
+  } = useReportFilters({ initialDateRange: handoffRange });
   const [pdfLoading, setPdfLoading] = useState<
     "summary" | "all-expenses" | null
   >(null);
@@ -140,7 +176,6 @@ export default function Reports() {
   const [copiedExpenses, setCopiedExpenses] = useState(false);
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [paidByFilter, setPaidByFilter] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<
     | "date-desc"
     | "date-asc"
@@ -170,6 +205,16 @@ export default function Reports() {
   const [sharing, setSharing] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+
+  const { openComposer, dataVersion } = useExpenseComposer();
+  const [confirmDeleteSettlement, setConfirmDeleteSettlement] = useState<SavedSettlement | null>(null);
+  const [showAllExpenses, setShowAllExpenses] = useState(false);
+
+  // Drop the hand-off from history so a reload keeps whatever range is chosen next.
+  useEffect(() => {
+    if (handoffRange) navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchDataWithoutSplitSpace = async () => {
     setLoading(true);
@@ -229,10 +274,6 @@ export default function Reports() {
 
     setLoading(true);
     try {
-      console.log(
-        "Reports: Fetching data for SplitSpace:",
-        selectedSplitSpace.id
-      );
       // Query that handles both migrated and unmigrated data
       const flatmatesQuery = supabase
         .from("flatmates")
@@ -345,32 +386,18 @@ export default function Reports() {
   useEffect(() => {
     // Wait for context to finish loading
     if (contextLoading) {
-      console.log("Reports: Context still loading, waiting...");
       return;
     }
 
-    console.log(
-      "Reports: Context loaded. SplitSpaces:",
-      splitSpaces.length,
-      "Selected:",
-      selectedSplitSpace?.name
-    );
-
     // If no split spaces exist (migrations not run), fetch without filter
     if (splitSpaces.length === 0) {
-      console.log("Reports: No split spaces, fetching without filter");
       fetchDataWithoutSplitSpace();
     } else if (selectedSplitSpace) {
-      console.log(
-        "Reports: Fetching with SplitSpace:",
-        selectedSplitSpace.name
-      );
       fetchData();
     } else {
-      console.log("Reports: No SplitSpace selected, setting loading to false");
       setLoading(false);
     }
-  }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
+  }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading, dataVersion]);
 
   // Apply filters to expenses
   useEffect(() => {
@@ -414,13 +441,6 @@ export default function Reports() {
     if (peopleFilters.paidBy.length > 0) {
       filteredExpenses = filteredExpenses.filter((expense) =>
         peopleFilters.paidBy.includes(expense.paid_by)
-      );
-    }
-
-    // Apply paidBy filter from transactions table
-    if (paidByFilter.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) =>
-        paidByFilter.includes(expense.paid_by)
       );
     }
 
@@ -471,12 +491,12 @@ export default function Reports() {
     }
 
     setExpenses(sortedExpenses);
-  }, [allExpenses, peopleFilters, categoryFilters, paidByFilter, sortBy]);
+  }, [allExpenses, peopleFilters, categoryFilters, sortBy]);
 
   useEffect(() => {
-    if (flatmates.length > 0 && expenses.length > 0) {
-      calculateBalances();
-    }
+    // Recompute on every change — including an empty period, which must not
+    // keep showing the previous period's balances.
+    calculateBalances();
   }, [flatmates, expenses]);
 
   const calculateBalances = () => {
@@ -563,8 +583,8 @@ export default function Reports() {
       toast.error("Select a split space first");
       return;
     }
-    if (balances.length === 0) {
-      toast.error("Nothing to share — no expenses in range");
+    if (expenses.length === 0) {
+      toast.error("Nothing to share — no expenses in this period");
       return;
     }
     setSharing(true);
@@ -715,7 +735,7 @@ export default function Reports() {
           .join(", ");
 
         text += `• ${expense.title}\n`;
-        text += `  Date: ${format(new Date(expense.date), "MMM dd, yyyy")}\n`;
+        text += `  Date: ${format(parseDay(expense.date), "MMM dd, yyyy")}\n`;
         text += `  Amount: ₹${expense.amount.toFixed(2)}\n`;
         text += `  Split with: ${splitWith}\n`;
         text += `  Per person: ₹${splitAmount.toFixed(2)}\n`;
@@ -774,7 +794,7 @@ export default function Reports() {
           .join(", ");
         const splitAmount = expense.amount / expense.expense_splits.length;
         return [
-          format(new Date(expense.date), "MMM d, yyyy"),
+          format(parseDay(expense.date), "MMM d, yyyy"),
           expense.title,
           paidBy?.name || "Unknown",
           splitBetween,
@@ -959,7 +979,7 @@ export default function Reports() {
 
           if (userData.expenses.length > 0) {
             const userExpenseData = userData.expenses.map((e) => [
-              format(new Date(e.date), "MMM d"),
+              format(parseDay(e.date), "MMM d"),
               e.title,
               pdfAmount(e.amount),
               `${e.expense_splits.length} people`,
@@ -1127,715 +1147,536 @@ export default function Reports() {
     }
   };
 
+  // ---- Derived view state -------------------------------------------------
+
+  const names = useMemo(() => new Map(flatmates.map((f) => [f.id, f.name])), [flatmates]);
+  const idByName = useMemo(() => new Map(flatmates.map((f) => [f.name, f.id])), [flatmates]);
+  const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalToMove = settlements.reduce((sum, s) => sum + s.amount, 0);
+
+  const activeFilterCount =
+    peopleFilters.exactMatch.length +
+    peopleFilters.anyMatch.length +
+    peopleFilters.exclude.length +
+    peopleFilters.paidBy.length +
+    categoryFilters.include.length +
+    categoryFilters.exclude.length;
+
+  const today = startOfDay(new Date());
+  const latestSettlement = savedSettlements.reduce<SavedSettlement | null>(
+    (latest, s) => (!latest || s.to_date > latest.to_date ? s : latest),
+    null
+  );
+  const { thisMonth, lastMonth } = monthRanges(today);
+  const presets: { key: string; label: string; range: DayRange }[] = [];
+  if (latestSettlement) {
+    const from = addDays(parseDay(latestSettlement.to_date), 1);
+    presets.push({ key: "since", label: "Since last settle-up", range: { from, to: from > today ? from : today } });
+  }
+  presets.push({ key: "this-month", label: "This month", range: thisMonth });
+  presets.push({ key: "last-month", label: "Last month", range: lastMonth });
+  const activePreset = presets.find((p) => sameRange(p.range, dateRange))?.key;
+
+  const filterSummary = (() => {
+    const parts: string[] = [];
+    const who = (ids: string[]) => ids.map((id) => names.get(id) ?? "?").join(", ");
+    if (peopleFilters.paidBy.length) parts.push(`paid by ${who(peopleFilters.paidBy)}`);
+    if (peopleFilters.exactMatch.length) parts.push(`shared by all of ${who(peopleFilters.exactMatch)}`);
+    if (peopleFilters.anyMatch.length) parts.push(`shared by any of ${who(peopleFilters.anyMatch)}`);
+    if (peopleFilters.exclude.length) parts.push(`leaving out ${who(peopleFilters.exclude)}`);
+    const cat = (ids: string[]) => ids.map((id) => categories.find((c) => c.id === id)?.name ?? "?").join(", ");
+    if (categoryFilters.include.length) parts.push(`only ${cat(categoryFilters.include)}`);
+    if (categoryFilters.exclude.length) parts.push(`hiding ${cat(categoryFilters.exclude)}`);
+    return parts.join(" · ");
+  })();
+
+  const clearAllFilters = () => {
+    setPeopleFilters({ exactMatch: [], anyMatch: [], exclude: [], paidBy: [] });
+    setCategoryFilters({ include: [], exclude: [] });
+  };
+
   // Allow page to work even if SplitSpaces feature isn't fully set up
   if (!selectedSplitSpace && splitSpaces.length > 0) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
+      <div>
+        <PageHeader title="Settle up" />
+        <Panel>
+          <p className="py-2 text-sm text-muted-foreground">Pick a space from the switcher to see balances.</p>
+        </Panel>
       </div>
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const visibleExpenses = showAllExpenses ? expenses : expenses.slice(0, 8);
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
-          {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
-              <span className="hidden sm:inline">SplitSpace: </span>
-              {selectedSplitSpace.name}
+    <div>
+      <PageHeader
+        title="Settle up"
+        description={
+          <>
+            {selectedSplitSpace ? `${selectedSplitSpace.name} · ` : ""}
+            {formatRange(dateRange.from, dateRange.to)}
+          </>
+        }
+      />
+
+      {/* Period + filters */}
+      <div className="mb-5 space-y-3">
+        <PeriodPicker
+          chips={presets.map((p) => ({
+            key: p.key,
+            label: p.label,
+            active: activePreset === p.key,
+            onSelect: () => setDateRange(p.range),
+          }))}
+          range={dateRange}
+          onCustomRange={setDateRange}
+          customActive={!activePreset}
+          trailing={
+            <>
+              {flatmates.length > 0 && (
+                <Dialog open={filtersModalOpen} onOpenChange={setFiltersModalOpen}>
+                  <DialogTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        activeFilterCount > 0
+                          ? "border-primary bg-primary/10 font-medium text-primary"
+                          : "border-border bg-card hover:border-foreground/30 hover:bg-secondary"
+                      )}
+                    >
+                      <Filter className="h-3.5 w-3.5" />
+                      Filters
+                      {activeFilterCount > 0 && (
+                        <span className="money rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                          {activeFilterCount}
+                        </span>
+                      )}
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Filter this period</DialogTitle>
+                      <DialogDescription>
+                        Balances and payments are worked out from the expenses that match. Filters are saved
+                        and also apply on Analytics.
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="mt-2 space-y-6">
+                      <PeopleFilters flatmates={flatmates} value={peopleFilters} onFiltersChange={setPeopleFilters} />
+                      <Separator />
+                      <CategoryFilterSection
+                        categories={categories}
+                        categoryFilters={categoryFilters}
+                        setCategoryFilters={setCategoryFilters}
+                      />
+                    </div>
+
+                    <div className="mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+                      <Button variant="outline" onClick={clearAllFilters} disabled={activeFilterCount === 0}>
+                        <X />
+                        Clear filters
+                      </Button>
+                      <Button onClick={() => setFiltersModalOpen(false)}>
+                        Show {plural(expenses.length, "expense")}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </>
+          }
+        />
+
+        {activeFilterCount > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm">
+            <Filter className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <p className="min-w-0 flex-1">
+              <span className="font-medium">Filtered:</span>{" "}
+              <span className="text-muted-foreground">{filterSummary}</span>
             </p>
-          )}
-        </div>
-        {selectedSplitSpace && savedSettlements.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/30 px-3 py-1.5">
-              <Bookmark className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              <div className="text-xs sm:text-sm">
-                <span className="text-muted-foreground">Last settlement: </span>
-                <span className="font-medium">
-                  {format(new Date(savedSettlements[0].from_date), "MMM d")} –{" "}
-                  {format(new Date(savedSettlements[0].to_date), "MMM d, yyyy")}
-                </span>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setAllSettlementsOpen(true)}
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="shrink-0 font-medium text-primary hover:underline"
             >
-              See all ({savedSettlements.length})
-            </Button>
+              Clear
+            </button>
           </div>
         )}
       </div>
 
-      {/* All settlements modal */}
-      <Dialog open={allSettlementsOpen} onOpenChange={setAllSettlementsOpen}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bookmark className="w-5 h-5" />
-              Past Settlements
-            </DialogTitle>
-            <DialogDescription>
-              Date ranges you've marked as settled in this split space.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            {savedSettlements.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-start justify-between gap-3 rounded-md border border-border/50 p-3 bg-secondary/20"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium">
-                    {format(new Date(s.from_date), "MMM d")} –{" "}
-                    {format(new Date(s.to_date), "MMM d, yyyy")}
-                  </div>
-                  {s.note && (
-                    <div className="text-xs text-muted-foreground mt-1 break-words">
-                      {s.note}
-                    </div>
-                  )}
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Marked {format(new Date(s.created_at), "MMM d, yyyy")}
+      {loading ? (
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
+          <Panel className="xl:col-span-3" title="Who pays whom">
+            <SkeletonRows rows={3} />
+          </Panel>
+          <Panel className="xl:col-span-2" title="Balances">
+            <SkeletonRows rows={4} />
+          </Panel>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5 xl:grid xl:grid-cols-5 xl:items-start">
+          {/* Below xl the column wrappers dissolve so panels stack in reading order. */}
+          <div className="contents xl:col-span-3 xl:block xl:space-y-5">
+            {/* The answer */}
+            <Panel
+              className="order-1"
+              title="Who pays whom"
+              description={
+                expenses.length > 0
+                  ? `${plural(expenses.length, "expense")} · ${formatMoney(totalSpent, { compact: true })} spent`
+                  : undefined
+              }
+            >
+              {expenses.length === 0 ? (
+                <div className="py-2">
+                  <p className="font-medium">No expenses in this period</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {activeFilterCount > 0
+                      ? "Nothing matches the filters for these dates. Try clearing them."
+                      : "Pick another period above, or add an expense dated in this range."}
+                  </p>
+                </div>
+              ) : settlements.length === 0 ? (
+                <div className="flex items-start gap-3 py-2">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-positive" />
+                  <div>
+                    <p className="font-medium">Everyone's even</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      No money needs to change hands for this period.
+                    </p>
                   </div>
                 </div>
+              ) : (
+                <ol className="divide-y divide-border/70">
+                  {settlements.map((t, i) => (
+                    <li key={`${t.from}-${t.to}-${i}`} className="flex items-center gap-3 py-3">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <PersonAvatar name={t.from} seed={idByName.get(t.from)} />
+                          <span className="truncate font-medium">{t.from}</span>
+                        </span>
+                        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                          pays
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <PersonAvatar name={t.to} seed={idByName.get(t.to)} />
+                          <span className="truncate font-medium">{t.to}</span>
+                        </span>
+                      </div>
+                      <span className="money shrink-0 text-base font-semibold">{formatMoney(t.amount)}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+
+              {expenses.length > 0 && (
+                <div className="mt-3 space-y-3 border-t pt-4">
+                  {settlements.length > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      {plural(settlements.length, "payment")} · {formatMoney(totalToMove)} changes hands in total.
+                    </p>
+                  )}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    {selectedSplitSpace && (
+                      <Button onClick={() => setMarkSettlementOpen(true)} className="sm:order-first">
+                        <CheckCircle2 />
+                        Mark as settled
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={copySettlementSummary}
+                      disabled={settlements.length === 0}
+                    >
+                      {copiedSettlement ? <Check /> : <Copy />}
+                      {copiedSettlement ? "Copied" : "Copy summary"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={createShareLink}
+                      disabled={sharing || !selectedSplitSpace}
+                    >
+                      {sharing ? <Loader2 className="animate-spin" /> : <Share2 />}
+                      {sharing ? "Creating link" : "Share link"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Panel>
+
+            {/* Supporting detail */}
+            {expenses.length > 0 && (
+              <Panel
+                className="order-3"
+                title="Expenses in this period"
+                actions={
+                  <Select value={sortBy} onValueChange={(value: typeof sortBy) => setSortBy(value)}>
+                    <SelectTrigger className="h-8 w-[150px] text-xs" aria-label="Sort expenses">
+                      <ArrowUpDown className="mr-1 h-3 w-3" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="end">
+                      <SelectItem value="date-desc">Newest first</SelectItem>
+                      <SelectItem value="date-asc">Oldest first</SelectItem>
+                      <SelectItem value="amount-desc">Highest amount</SelectItem>
+                      <SelectItem value="amount-asc">Lowest amount</SelectItem>
+                      <SelectItem value="title-asc">Title A–Z</SelectItem>
+                      <SelectItem value="title-desc">Title Z–A</SelectItem>
+                    </SelectContent>
+                  </Select>
+                }
+                bodyClassName="pt-1"
+              >
+                <div className="divide-y divide-border/70">
+                  {visibleExpenses.map((expense) => (
+                    <ExpenseRow
+                      key={expense.id}
+                      expense={expense}
+                      names={names}
+                      peopleCount={flatmates.length}
+                      onSelect={() => openComposer(expense)}
+                    />
+                  ))}
+                </div>
+                {expenses.length > visibleExpenses.length && (
+                  <Button variant="ghost" className="mt-2 w-full text-primary" onClick={() => setShowAllExpenses(true)}>
+                    Show all {expenses.length}
+                    <ChevronDown />
+                  </Button>
+                )}
+              </Panel>
+            )}
+          </div>
+
+          <div className="contents xl:col-span-2 xl:block xl:space-y-5">
+            {expenses.length > 0 && (
+              <Panel
+                className="order-2"
+                title="Balances"
+                description="Paid minus their share of each expense"
+                bodyClassName="pt-1"
+              >
+                <ul className="divide-y divide-border/70">
+                  {balances.map((b) => {
+                    const state = Math.abs(b.balance) < EPSILON ? "even" : b.balance > 0 ? "gets" : "owes";
+                    return (
+                      <li key={b.id} className="flex items-center gap-3 py-3">
+                        <PersonAvatar name={b.name} seed={b.id} size="md" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{b.name}</p>
+                          <p className="money text-xs text-muted-foreground">
+                            Paid {formatMoney(b.totalPaid)} · share {formatMoney(b.totalOwed)}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          {state === "even" ? (
+                            <span className="text-sm text-muted-foreground">Even</span>
+                          ) : (
+                            <>
+                              <span
+                                className={cn(
+                                  "block text-[11px] font-medium",
+                                  state === "gets" ? "text-positive" : "text-negative"
+                                )}
+                              >
+                                {state === "gets" ? "gets back" : "owes"}
+                              </span>
+                              <span
+                                className={cn(
+                                  "money block text-sm font-semibold",
+                                  state === "gets" ? "text-positive" : "text-negative"
+                                )}
+                              >
+                                {formatMoney(Math.abs(b.balance))}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Panel>
+            )}
+
+            <Panel className="order-4" title="Export" description="Uses the period and filters above">
+              <div className="grid gap-2">
                 <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive flex-shrink-0"
-                  onClick={() => deleteSavedSettlement(s.id)}
-                  aria-label="Delete settlement"
+                  variant="outline"
+                  className="justify-start"
+                  onClick={generateSummaryPDF}
+                  disabled={pdfLoading === "summary" || expenses.length === 0}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  {pdfLoading === "summary" ? <Loader2 className="animate-spin" /> : <Download />}
+                  Settlement report
+                  <span className="ml-auto text-xs text-muted-foreground">PDF</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-start"
+                  onClick={generateAllExpensesPDF}
+                  disabled={pdfLoading === "all-expenses" || expenses.length === 0}
+                >
+                  {pdfLoading === "all-expenses" ? <Loader2 className="animate-spin" /> : <Download />}
+                  Expense list
+                  <span className="ml-auto text-xs text-muted-foreground">PDF</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-start"
+                  onClick={copyAllExpenses}
+                  disabled={expenses.length === 0}
+                >
+                  {copiedExpenses ? <Check /> : <Copy />}
+                  {copiedExpenses ? "Copied" : "Copy breakdown by person"}
+                  <span className="ml-auto text-xs text-muted-foreground">Text</span>
                 </Button>
               </div>
-            ))}
+            </Panel>
+
+            {selectedSplitSpace && (
+              <Panel
+                className="order-5"
+                title="Past settle-ups"
+                description={
+                  savedSettlements.length === 0
+                    ? "Periods you mark as settled show up here."
+                    : "Tap a period to load it"
+                }
+                bodyClassName={savedSettlements.length === 0 ? "pb-1 pt-0" : "pt-1"}
+              >
+                {savedSettlements.length > 0 && (
+                  <ul className="divide-y divide-border/70">
+                    {(allSettlementsOpen ? savedSettlements : savedSettlements.slice(0, 4)).map((s) => {
+                      const loaded =
+                        isSameDay(parseDay(s.from_date), dateRange.from) &&
+                        isSameDay(parseDay(s.to_date), dateRange.to);
+                      return (
+                        <li key={s.id} className="flex items-center gap-1 py-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDateRange({ from: parseDay(s.from_date), to: parseDay(s.to_date) })
+                            }
+                            className={cn(
+                              "-ml-2 min-w-0 flex-1 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              loaded && "bg-secondary"
+                            )}
+                          >
+                            <span className="flex items-center gap-2 text-sm font-medium">
+                              <Bookmark className={cn("h-3.5 w-3.5 shrink-0", loaded ? "text-primary" : "text-muted-foreground")} />
+                              {formatRange(parseDay(s.from_date), parseDay(s.to_date))}
+                            </span>
+                            <span className="mt-0.5 block truncate pl-[1.375rem] text-xs text-muted-foreground">
+                              {s.note ? `${s.note} · ` : ""}marked {formatDay(s.created_at.slice(0, 10), "MMM d")}
+                            </span>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-negative"
+                            onClick={() => setConfirmDeleteSettlement(s)}
+                            aria-label={`Remove settle-up ${formatRange(parseDay(s.from_date), parseDay(s.to_date))}`}
+                          >
+                            <Trash2 />
+                          </Button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {savedSettlements.length > 4 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-1 w-full text-primary"
+                    onClick={() => setAllSettlementsOpen((v) => !v)}
+                  >
+                    {allSettlementsOpen ? "Show fewer" : `Show all ${savedSettlements.length}`}
+                  </Button>
+                )}
+              </Panel>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* Mark as settled */}
+      <Dialog
+        open={markSettlementOpen}
+        onOpenChange={(open) => {
+          setMarkSettlementOpen(open);
+          if (!open) setSettlementNote("");
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark {formatRange(dateRange.from, dateRange.to)} as settled?</DialogTitle>
+            <DialogDescription>
+              Do this once the payments above have been made. Home then only counts expenses after{" "}
+              {format(dateRange.to, "MMM d")}, so the next round starts fresh. Nothing is deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="settlement-note">
+              Note <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
+            <Textarea
+              id="settlement-note"
+              placeholder="e.g. Paid over UPI, Kabir still owes ₹200"
+              value={settlementNote}
+              onChange={(e) => setSettlementNote(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setMarkSettlementOpen(false)} disabled={savingSettlement}>
+              Cancel
+            </Button>
+            <Button onClick={saveSettlement} disabled={savingSettlement}>
+              {savingSettlement ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+              Mark as settled
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Date Range Selector */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle>Select Date Range</CardTitle>
-            <div className="flex items-center gap-2 flex-wrap">
-              {selectedSplitSpace && (
-                <Dialog
-                  open={markSettlementOpen}
-                  onOpenChange={(open) => {
-                    setMarkSettlementOpen(open);
-                    if (!open) setSettlementNote("");
-                  }}
-                >
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <Bookmark className="w-4 h-4" />
-                      Mark Settlement
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Mark Settlement</DialogTitle>
-                      <DialogDescription>
-                        Save this date range so you remember when the last
-                        settlement happened.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                      <div className="text-sm">
-                        <span className="text-muted-foreground">Range: </span>
-                        <span className="font-medium">
-                          {format(dateRange.from, "MMM d, yyyy")} –{" "}
-                          {format(dateRange.to, "MMM d, yyyy")}
-                        </span>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="settlement-note">
-                          Note (optional)
-                        </Label>
-                        <Textarea
-                          id="settlement-note"
-                          placeholder="e.g. Settled in cash, Bob still pending"
-                          value={settlementNote}
-                          onChange={(e) => setSettlementNote(e.target.value)}
-                          rows={3}
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        onClick={() => setMarkSettlementOpen(false)}
-                        disabled={savingSettlement}
-                      >
-                        Cancel
-                      </Button>
-                      <Button onClick={saveSettlement} disabled={savingSettlement}>
-                        {savingSettlement ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Saving
-                          </>
-                        ) : (
-                          "Save"
-                        )}
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              )}
-              {flatmates.length > 0 && (
-              <Dialog
-                open={filtersModalOpen}
-                onOpenChange={setFiltersModalOpen}
-              >
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <Filter className="w-4 h-4" />
-                    Filters
-                    {(peopleFilters.exactMatch.length > 0 ||
-                      peopleFilters.anyMatch.length > 0 ||
-                      peopleFilters.exclude.length > 0 ||
-                      peopleFilters.paidBy.length > 0 ||
-                      categoryFilters.include.length > 0 ||
-                      categoryFilters.exclude.length > 0) && (
-                      <Badge
-                        variant="secondary"
-                        className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
-                      >
-                        {peopleFilters.exactMatch.length +
-                          peopleFilters.anyMatch.length +
-                          peopleFilters.exclude.length +
-                          peopleFilters.paidBy.length +
-                          categoryFilters.include.length +
-                          categoryFilters.exclude.length}
-                      </Badge>
-                    )}
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                      <Filter className="w-5 h-5 text-primary" />
-                      Filters
-                    </DialogTitle>
-                    <DialogDescription>
-                      Narrow down what you're looking at by people or category.
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  <div className="space-y-6 mt-2">
-                    <PeopleFilters
-                      flatmates={flatmates}
-                      onFiltersChange={setPeopleFilters}
-                    />
-
-                    <Separator />
-
-                    {/* Category filters as chip pills */}
-                    <CategoryFilterSection
-                      categories={categories}
-                      categoryFilters={categoryFilters}
-                      setCategoryFilters={setCategoryFilters}
-                    />
-                  </div>
-
-                  <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-6 pt-4 border-t">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        resetFilters();
-                      }}
-                    >
-                      <X className="w-4 h-4 mr-2" />
-                      Reset all
-                    </Button>
-                    <Button onClick={() => setFiltersModalOpen(false)}>
-                      Apply
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "w-full sm:w-[240px] justify-start text-left font-normal",
-                    !dateRange.from && "text-muted-foreground"
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">
-                    {dateRange.from ? (
-                      format(dateRange.from, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick start date</span>
-                    )}
-                    {dateRange.from && (
-                      <span className="sm:hidden">
-                        {format(dateRange.from, "MMM dd")}
-                      </span>
-                    )}
-                  </span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.from}
-                  onSelect={(date) =>
-                    date && setDateRange({ ...dateRange, from: date })
-                  }
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-
-            <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
-              to
-            </span>
-            <span className="text-muted-foreground text-center sm:hidden">
-              ↓
-            </span>
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "w-full sm:w-[240px] justify-start text-left font-normal",
-                    !dateRange.to && "text-muted-foreground"
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">
-                    {dateRange.to ? (
-                      format(dateRange.to, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick end date</span>
-                    )}
-                    {dateRange.to && (
-                      <span className="sm:hidden">
-                        {format(dateRange.to, "MMM dd")}
-                      </span>
-                    )}
-                  </span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.to}
-                  onSelect={(date) =>
-                    date && setDateRange({ ...dateRange, to: date })
-                  }
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-
-          {/* Copy Buttons */}
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4">
-            <Button
-              variant="outline"
-              onClick={copySettlementSummary}
-              disabled={settlements.length === 0}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto"
+      {/* Remove a past settle-up */}
+      <AlertDialog
+        open={!!confirmDeleteSettlement}
+        onOpenChange={(open) => !open && setConfirmDeleteSettlement(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this settle-up?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmDeleteSettlement &&
+                `${formatRange(
+                  parseDay(confirmDeleteSettlement.from_date),
+                  parseDay(confirmDeleteSettlement.to_date)
+                )} will no longer count as settled, so its expenses go back into the open balance on Home. Expenses themselves aren't touched.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (confirmDeleteSettlement) deleteSavedSettlement(confirmDeleteSettlement.id);
+                setConfirmDeleteSettlement(null);
+              }}
             >
-              {copiedSettlement ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span className="sm:hidden">Copied!</span>
-                  <span className="hidden sm:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  <span className="sm:hidden">Copy Summary</span>
-                  <span className="hidden sm:inline">
-                    Copy Settlement Summary
-                  </span>
-                </>
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={copyAllExpenses}
-              disabled={expenses.length === 0}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto"
-            >
-              {copiedExpenses ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span className="sm:hidden">Copied!</span>
-                  <span className="hidden sm:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  <span className="sm:hidden">Copy Expenses</span>
-                  <span className="hidden sm:inline">
-                    Copy All Expense Splitting
-                  </span>
-                </>
-              )}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Filtered Transactions List */}
-      {expenses.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="w-5 h-5" />
-                Filtered Transactions ({expenses.length})
-              </CardTitle>
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge variant="secondary">
-                  {format(dateRange.from, "MMM dd")} -{" "}
-                  {format(dateRange.to, "MMM dd")}
-                </Badge>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-medium whitespace-nowrap">
-                    Sort By:
-                  </Label>
-                  <Select
-                    value={sortBy}
-                    onValueChange={(value: typeof sortBy) => setSortBy(value)}
-                  >
-                    <SelectTrigger className="h-8 w-[140px] text-xs">
-                      <div className="flex items-center gap-1">
-                        <ArrowUpDown className="w-3 h-3" />
-                        <SelectValue />
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
-                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
-                      <SelectItem value="amount-desc">Amount (High)</SelectItem>
-                      <SelectItem value="amount-asc">Amount (Low)</SelectItem>
-                      <SelectItem value="title-asc">Title (A-Z)</SelectItem>
-                      <SelectItem value="title-desc">Title (Z-A)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-medium whitespace-nowrap">
-                    Paid By:
-                  </Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs min-w-[120px] justify-between"
-                      >
-                        <span className="truncate">
-                          {paidByFilter.length === 0
-                            ? "All"
-                            : paidByFilter.length === 1
-                            ? flatmates.find((f) => f.id === paidByFilter[0])
-                                ?.name || "Selected"
-                            : `${paidByFilter.length} selected`}
-                        </span>
-                        <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-56 p-2" align="end">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between px-2 pb-1 border-b">
-                          <Label className="text-sm font-medium">
-                            Select People
-                          </Label>
-                          {paidByFilter.length > 0 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 text-xs"
-                              onClick={() => {
-                                setPaidByFilter([]);
-                              }}
-                            >
-                              Clear
-                            </Button>
-                          )}
-                        </div>
-                        <div className="space-y-1 max-h-48 overflow-y-auto">
-                          {flatmates.map((flatmate) => (
-                            <div
-                              key={flatmate.id}
-                              className="flex items-center space-x-2 px-2 py-1 hover:bg-secondary/50 rounded"
-                            >
-                              <Checkbox
-                                id={`table-paidby-${flatmate.id}`}
-                                checked={paidByFilter.includes(flatmate.id)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setPaidByFilter([
-                                      ...paidByFilter,
-                                      flatmate.id,
-                                    ]);
-                                  } else {
-                                    setPaidByFilter(
-                                      paidByFilter.filter(
-                                        (id) => id !== flatmate.id
-                                      )
-                                    );
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`table-paidby-${flatmate.id}`}
-                                className="text-sm font-normal cursor-pointer flex-1"
-                              >
-                                {flatmate.name}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {expenses.map((expense) => {
-                const paidByFlatmate = flatmates.find(
-                  (f) => f.id === expense.paid_by
-                );
-                const splitCount = expense.expense_splits.length;
-                const sharePerPerson = expense.amount / splitCount;
-                const splitWith = expense.expense_splits
-                  .map((split) => {
-                    const flatmate = flatmates.find(
-                      (f) => f.id === split.flatmate_id
-                    );
-                    return flatmate?.name;
-                  })
-                  .filter(Boolean)
-                  .join(", ");
-
-                return (
-                  <div
-                    key={expense.id}
-                    className="p-3 bg-secondary/30 rounded-lg border border-border/50 hover:border-primary/30 transition-colors"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <h3 className="font-semibold text-base">
-                            {expense.title}
-                          </h3>
-                          {expense.categories && (
-                            <Badge variant="secondary" className="text-xs">
-                              {expense.categories.name}
-                            </Badge>
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(expense.date), "MMM dd, yyyy")}
-                          </span>
-                        </div>
-                        <div className="text-sm text-muted-foreground space-y-1">
-                          <p>
-                            Paid by{" "}
-                            <span className="font-medium text-foreground">
-                              {paidByFlatmate?.name || "Unknown"}
-                            </span>
-                          </p>
-                          <p>
-                            Split between {splitCount}{" "}
-                            {splitCount === 1 ? "person" : "people"}:{" "}
-                            {splitWith}
-                          </p>
-                          <p>${sharePerPerson.toFixed(2)} per person</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xl font-bold text-primary">
-                          ${expense.amount.toFixed(2)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {expenses.length === 0 && (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Receipt className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">
-              No expenses found matching the selected filters and date range.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Reports */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {/* All Expenses Report */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="hidden sm:inline">All Expenses</span>
-              <span className="sm:hidden">Expenses</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              <span className="hidden sm:inline">
-                Download a detailed report of all expenses in the selected
-                period.
-              </span>
-              <span className="sm:hidden">
-                Download detailed expense report.
-              </span>
-            </p>
-            <Button
-              onClick={generateAllExpensesPDF}
-              disabled={pdfLoading === "all-expenses"}
-              className="w-full"
-            >
-              {pdfLoading === "all-expenses" ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  <span className="hidden sm:inline">Generating...</span>
-                  <span className="sm:hidden">Generating</span>
-                </>
-              ) : (
-                <>
-                  <Download className="mr-2 h-4 w-4" />
-                  <span className="hidden sm:inline">Download PDF</span>
-                  <span className="sm:hidden">Download</span>
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Balance Summary Report */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="hidden sm:inline">Balance Summary</span>
-              <span className="sm:hidden">Summary</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              <span className="hidden sm:inline">
-                Download settlement summary with balances and transaction
-                details.
-              </span>
-              <span className="sm:hidden">Download settlement summary.</span>
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Button
-                onClick={generateSummaryPDF}
-                disabled={pdfLoading === "summary"}
-                className="flex-1 w-full sm:w-auto"
-              >
-                {pdfLoading === "summary" ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    <span className="hidden sm:inline">Generating...</span>
-                    <span className="sm:hidden">Generating</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="mr-2 h-4 w-4" />
-                    <span className="hidden sm:inline">Download PDF</span>
-                    <span className="sm:hidden">Download</span>
-                  </>
-                )}
-              </Button>
-              {/* <Button
-                variant="outline"
-                onClick={() => setEmailDialogOpen(true)}
-                className="flex-1 w-full sm:w-auto"
-              >
-                <Mail className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline">Send via Email</span>
-                <span className="sm:hidden">Email</span>
-              </Button> */}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Share public link */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Share2 className="h-4 w-4 sm:h-5 sm:w-5" />
-              Share
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Generate a public web link with the current Summary, Settlements,
-              and Expenses. Snapshot — anyone with the link can view it.
-            </p>
-            <Button
-              onClick={createShareLink}
-              disabled={
-                sharing || balances.length === 0 || !selectedSplitSpace
-              }
-              className="w-full"
-              variant="secondary"
-            >
-              {sharing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating link
-                </>
-              ) : (
-                <>
-                  <Share2 className="mr-2 h-4 w-4" />
-                  Create Public Link
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Share result dialog */}
       <Dialog
@@ -1851,29 +1692,20 @@ export default function Reports() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <LinkIcon className="w-5 h-5" />
+              <LinkIcon className="h-5 w-5" />
               Public link ready
             </DialogTitle>
             <DialogDescription>
-              Anyone with this link can view the snapshot. New expenses won't
-              change what they see.
+              Anyone with this link can see this period's balances, payments and expenses. It's a snapshot:
+              later changes won't show up.
             </DialogDescription>
           </DialogHeader>
           {shareUrl && (
             <div className="flex items-center gap-2">
               <Input value={shareUrl} readOnly onFocus={(e) => e.currentTarget.select()} />
-              <Button onClick={copyShareUrl} variant="outline" className="gap-2">
-                {shareCopied ? (
-                  <>
-                    <Check className="h-4 w-4" />
-                    Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4" />
-                    Copy
-                  </>
-                )}
+              <Button onClick={copyShareUrl} variant="outline">
+                {shareCopied ? <Check /> : <Copy />}
+                {shareCopied ? "Copied" : "Copy"}
               </Button>
             </div>
           )}
@@ -1890,176 +1722,6 @@ export default function Reports() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Balance Summary */}
-      {balances.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              Balance Summary
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-              <table className="w-full border-collapse min-w-[600px] sm:min-w-0">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2 text-xs sm:text-sm">Name</th>
-                    <th className="text-right p-2 text-xs sm:text-sm">
-                      <span className="hidden sm:inline">Total Paid</span>
-                      <span className="sm:hidden">Paid</span>
-                    </th>
-                    <th className="text-right p-2 text-xs sm:text-sm">
-                      <span className="hidden sm:inline">Total Owed</span>
-                      <span className="sm:hidden">Owed</span>
-                    </th>
-                    <th className="text-right p-2 text-xs sm:text-sm">
-                      <span className="hidden sm:inline">Net Balance</span>
-                      <span className="sm:hidden">Balance</span>
-                    </th>
-                    <th className="text-center p-2 text-xs sm:text-sm">
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {balances.map((balance) => (
-                    <tr key={balance.id} className="border-b">
-                      <td className="p-2 font-medium text-sm sm:text-base">
-                        {balance.name}
-                      </td>
-                      <td className="p-2 text-right text-sm sm:text-base">
-                        <span className="hidden sm:inline">
-                          ₹{balance.totalPaid.toFixed(2)}
-                        </span>
-                        <span className="sm:hidden">
-                          ₹{balance.totalPaid.toFixed(0)}
-                        </span>
-                      </td>
-                      <td className="p-2 text-right text-sm sm:text-base">
-                        <span className="hidden sm:inline">
-                          ₹{balance.totalOwed.toFixed(2)}
-                        </span>
-                        <span className="sm:hidden">
-                          ₹{balance.totalOwed.toFixed(0)}
-                        </span>
-                      </td>
-                      <td className="p-2 text-right font-semibold text-sm sm:text-base">
-                        <span className="hidden sm:inline">
-                          {balance.balance >= 0
-                            ? `+₹${balance.balance.toFixed(2)}`
-                            : `-₹${Math.abs(balance.balance).toFixed(2)}`}
-                        </span>
-                        <span className="sm:hidden">
-                          {balance.balance >= 0
-                            ? `+₹${balance.balance.toFixed(0)}`
-                            : `-₹${Math.abs(balance.balance).toFixed(0)}`}
-                        </span>
-                      </td>
-                      <td className="p-2 text-center text-xs sm:text-sm">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            balance.balance > 0
-                              ? "bg-green-100 text-green-800"
-                              : balance.balance < 0
-                              ? "bg-red-100 text-red-800"
-                              : "bg-gray-100 text-gray-800"
-                          }`}
-                        >
-                          {balance.balance > 0
-                            ? "Owes Money"
-                            : balance.balance < 0
-                            ? "Needs Money"
-                            : "Settled"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Settlement Instructions */}
-      {settlements.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              Settlement Instructions
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 sm:space-y-4">
-              {settlements.map((settlement, index) => (
-                <div
-                  key={index}
-                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 bg-green-50 rounded-lg border border-green-200 gap-2 sm:gap-0"
-                >
-                  <div className="flex items-center gap-2 sm:gap-4">
-                    <span className="font-bold text-green-800 text-sm sm:text-base">
-                      {index + 1}.
-                    </span>
-                    <span className="text-green-800 text-sm sm:text-base">
-                      {settlement.from}
-                    </span>
-                    <span className="text-green-600 text-sm sm:text-base">
-                      →
-                    </span>
-                    <span className="text-green-800 text-sm sm:text-base">
-                      {settlement.to}
-                    </span>
-                  </div>
-                  <span className="font-bold text-green-800 text-sm sm:text-base">
-                    ₹{settlement.amount.toFixed(2)}
-                  </span>
-                </div>
-              ))}
-              <div className="mt-4 p-3 sm:p-4 bg-green-100 rounded-lg">
-                <p className="font-bold text-green-800 text-sm sm:text-base">
-                  <span className="hidden sm:inline">
-                    Settlement Complete! Total transactions:{" "}
-                    {settlements.length}
-                  </span>
-                  <span className="sm:hidden">
-                    Complete! {settlements.length} transaction
-                    {settlements.length !== 1 ? "s" : ""}
-                  </span>
-                </p>
-                <p className="text-green-700 text-xs sm:text-sm mt-1">
-                  <span className="hidden sm:inline">
-                    Total amount to be transferred: ₹
-                  </span>
-                  <span className="sm:hidden">Total: ₹</span>
-                  {settlements.reduce((sum, s) => sum + s.amount, 0).toFixed(2)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* All Settled Up */}
-      {settlements.length === 0 && balances.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              All Settled Up! 🎉
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-green-600 text-sm sm:text-base">
-              <span className="hidden sm:inline">
-                No money needs to be transferred between flatmates.
-              </span>
-              <span className="sm:hidden">
-                All settled! No transfers needed.
-              </span>
-            </p>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Email Report Dialog */}
       <EmailReportDialog

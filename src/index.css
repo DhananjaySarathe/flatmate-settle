@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
 All colors MUST be HSL.
 */
 
@@ -27,7 +27,8 @@ All colors MUST be HSL.
     --secondary-foreground: 24 10% 10%;
 
     --muted: 35 20% 92%;
-    --muted-foreground: 25 5% 45%;
+    /* Darkened from 45% so secondary text clears 4.5:1 on the cream page. */
+    --muted-foreground: 25 6% 39%;
 
     --accent: 84 50% 35%;
     --accent-foreground: 0 0% 100%;
@@ -38,8 +39,17 @@ All colors MUST be HSL.
     --success: 84 50% 35%;
     --success-foreground: 0 0% 100%;
 
+    /* Money direction. Text-safe tones (≥4.5:1 on white and cream). */
+    --positive: 84 55% 28%;
+    --positive-soft: 84 45% 92%;
+    --negative: 6 68% 42%;
+    --negative-soft: 8 70% 95%;
+
+    /* Second neutral layer for the sidebar / tab bar. */
+    --sidebar: 35 30% 93%;
+
     --border: 35 15% 85%;
-    --input: 35 15% 85%;
+    --input: 35 15% 82%;
     --ring: 18 75% 40%;
 
     --radius: 0.75rem;
@@ -48,7 +58,8 @@ All colors MUST be HSL.
     --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(35 35% 96%));
     --gradient-shine: linear-gradient(110deg, transparent 25%, hsl(18 75% 55% / 0.18) 50%, transparent 75%);
 
-    --shadow-card: 0 2px 6px hsl(20 10% 75% / 0.35);
+    --shadow-card: 0 1px 2px hsl(24 20% 30% / 0.06), 0 2px 8px hsl(24 20% 30% / 0.05);
+    --shadow-raised: 0 4px 12px hsl(24 25% 25% / 0.10), 0 1px 3px hsl(24 25% 25% / 0.08);
     --shadow-glow: 0 4px 14px hsl(18 75% 40% / 0.18);
   }
 }
@@ -57,13 +68,29 @@ All colors MUST be HSL.
   .glass-card {
     @apply bg-card/50 backdrop-blur-xl border border-border/50;
   }
-  
+
   .gradient-text {
     @apply bg-gradient-to-r from-primary to-amber-500 bg-clip-text text-transparent;
   }
-  
+
   .hover-lift {
     @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-lg;
+  }
+
+  .money {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "cv11" 1;
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -72,9 +99,42 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-feature-settings: "cv11" 1, "ss01" 1;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+    color: hsl(var(--foreground));
+  }
+
+  input,
+  textarea {
+    caret-color: hsl(var(--primary));
+  }
+
+  /* Number inputs: no spinners — amounts are typed, not nudged. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
-

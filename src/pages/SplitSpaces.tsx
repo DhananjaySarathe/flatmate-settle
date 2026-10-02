@@ -24,8 +24,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { Plus, Building2, Edit, Trash2, Loader2, Users, Receipt } from "lucide-react";
-import { motion } from "framer-motion";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
+import { useNavigate } from "react-router-dom";
+import { PageHeader, Panel, SkeletonRows } from "@/components/PageHeader";
+import { cn } from "@/lib/utils";
+import { errorMessage } from "@/lib/format";
 
 interface SplitSpace {
   id: string;
@@ -50,6 +53,7 @@ const SplitSpaces = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [splitSpaceToDelete, setSplitSpaceToDelete] = useState<SplitSpaceWithCounts | null>(null);
   const [splitSpacesWithCounts, setSplitSpacesWithCounts] = useState<SplitSpaceWithCounts[]>([]);
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchSplitSpacesWithCounts();
@@ -108,7 +112,7 @@ const SplitSpaces = () => {
           .eq("id", editingSplitSpace.id);
 
         if (error) throw error;
-        toast.success("SplitSpace updated successfully");
+        toast.success("Space renamed");
       } else {
         const { error } = await supabase.from("split_spaces").insert({
           name: formData.name.trim(),
@@ -117,12 +121,12 @@ const SplitSpaces = () => {
 
         if (error) {
           if (error.code === "23505") {
-            toast.error("A SplitSpace with this name already exists");
+            toast.error("You already have a space with that name");
             return;
           }
           throw error;
         }
-        toast.success("SplitSpace created successfully");
+        toast.success(`Created ${formData.name.trim()}`);
       }
 
       setDialogOpen(false);
@@ -130,8 +134,8 @@ const SplitSpaces = () => {
       setEditingSplitSpace(null);
       await refreshSplitSpaces();
       await fetchSplitSpacesWithCounts();
-    } catch (error: any) {
-      toast.error(error.message || "Error saving SplitSpace");
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't save the space"));
     } finally {
       setSubmitLoading(false);
     }
@@ -176,13 +180,13 @@ const SplitSpaces = () => {
         }
       }
 
-      toast.success("SplitSpace deleted successfully");
+      toast.success("Space deleted");
       setDeleteDialogOpen(false);
       setSplitSpaceToDelete(null);
       await refreshSplitSpaces();
       await fetchSplitSpacesWithCounts();
-    } catch (error: any) {
-      toast.error(error.message || "Error deleting SplitSpace");
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't delete the space"));
     } finally {
       setDeleteLoading(null);
     }
@@ -199,222 +203,201 @@ const SplitSpaces = () => {
     setDeleteDialogOpen(true);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const openSpace = (splitSpace: SplitSpace) => {
+    setSelectedSplitSpace(splitSpace);
+    navigate("/dashboard");
+  };
+
+  const deleteBlockedReason = (splitSpace: SplitSpaceWithCounts) => {
+    if (splitSpace.name === "Default") return "Your Default space can't be deleted";
+    if (splitSpace.flatmatesCount > 0 || splitSpace.expensesCount > 0)
+      return "Remove its people and expenses first";
+    return null;
+  };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">SplitSpaces</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage your expense groups. Each SplitSpace has its own flatmates and expenses.
-          </p>
-        </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={() => {
+    <div>
+      <PageHeader
+        title="Spaces"
+        description="Each space keeps its own people, expenses and settle-ups: a flat, a trip, an office."
+        actions={
+          <Button
+            onClick={() => {
               setEditingSplitSpace(null);
               setFormData({ name: "" });
-            }}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create SplitSpace
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {editingSplitSpace ? "Edit SplitSpace" : "Create New SplitSpace"}
-              </DialogTitle>
-              <DialogDescription>
-                {editingSplitSpace
-                  ? "Update the name of your SplitSpace."
-                  : "Create a new SplitSpace to organize your expenses separately."}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ name: e.target.value })}
-                  placeholder="e.g., Apartment, Vacation, Office"
-                  required
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setDialogOpen(false);
-                    setEditingSplitSpace(null);
-                    setFormData({ name: "" });
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={submitLoading}>
-                  {submitLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {editingSplitSpace ? "Updating..." : "Creating..."}
-                    </>
-                  ) : (
-                    editingSplitSpace ? "Update" : "Create"
-                  )}
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+              setDialogOpen(true);
+            }}
+          >
+            <Plus />
+            New space
+          </Button>
+        }
+      />
 
-      {splitSpacesWithCounts.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Building2 className="w-16 h-16 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No SplitSpaces yet</h3>
-            <p className="text-muted-foreground text-center mb-4">
-              Create your first SplitSpace to start organizing expenses.
+      {loading ? (
+        <Panel>
+          <SkeletonRows rows={3} />
+        </Panel>
+      ) : splitSpacesWithCounts.length === 0 ? (
+        <Panel>
+          <div className="py-4">
+            <p className="font-medium">No spaces yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Create one for each group you split costs with.
             </p>
-            <Button onClick={() => setDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create SplitSpace
+            <Button className="mt-4" onClick={() => setDialogOpen(true)}>
+              <Plus />
+              Create a space
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </Panel>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {splitSpacesWithCounts.map((splitSpace) => (
-            <motion.div
-              key={splitSpace.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-            >
-              <Card
-                className={`cursor-pointer transition-all hover:shadow-lg ${
-                  selectedSplitSpace?.id === splitSpace.id
-                    ? "ring-2 ring-primary"
-                    : ""
-                }`}
-                onClick={() => setSelectedSplitSpace(splitSpace)}
-              >
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2">
-                      <Building2 className="w-5 h-5 text-primary" />
-                      <CardTitle className="text-lg">{splitSpace.name}</CardTitle>
-                    </div>
-                    {selectedSplitSpace?.id === splitSpace.id && (
-                      <span className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded">
-                        Active
-                      </span>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Users className="w-4 h-4" />
-                        <span>Flatmates</span>
-                      </div>
-                      <span className="font-semibold">{splitSpace.flatmatesCount}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Receipt className="w-4 h-4" />
-                        <span>Expenses</span>
-                      </div>
-                      <span className="font-semibold">{splitSpace.expensesCount}</span>
-                    </div>
-                    <div className="flex gap-2 pt-2 border-t">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEditDialog(splitSpace);
-                        }}
-                      >
-                        <Edit className="w-4 h-4 mr-1" />
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-destructive hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openDeleteDialog(splitSpace);
-                        }}
-                        disabled={deleteLoading === splitSpace.id || splitSpace.name === "Default"}
-                        title={splitSpace.name === "Default" ? "Cannot delete default SplitSpace" : ""}
-                      >
-                        {deleteLoading === splitSpace.id ? (
-                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4 mr-1" />
+        <Panel bodyClassName="py-1">
+          <ul className="divide-y divide-border/70">
+            {splitSpacesWithCounts.map((splitSpace) => {
+              const active = selectedSplitSpace?.id === splitSpace.id;
+              const blocked = deleteBlockedReason(splitSpace);
+              return (
+                <li key={splitSpace.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    onClick={() => openSpace(splitSpace)}
+                    className="-mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span
+                      className={cn(
+                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+                        active ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                      )}
+                    >
+                      <Building2 className="h-5 w-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate font-medium">{splitSpace.name}</span>
+                        {active && (
+                          <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                            Current
+                          </span>
                         )}
-                        Delete
-                      </Button>
-                    </div>
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-3 text-sm text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <Users className="h-3.5 w-3.5" />
+                          {splitSpace.flatmatesCount} {splitSpace.flatmatesCount === 1 ? "person" : "people"}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <Receipt className="h-3.5 w-3.5" />
+                          {splitSpace.expensesCount} {splitSpace.expensesCount === 1 ? "expense" : "expenses"}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+                  <div className="flex items-center gap-1 pl-[3.25rem] sm:pl-0">
+                    <Button variant="ghost" size="sm" onClick={() => openEditDialog(splitSpace)}>
+                      <Edit />
+                      Rename
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-negative hover:bg-negative-soft hover:text-negative"
+                      onClick={() => openDeleteDialog(splitSpace)}
+                      disabled={deleteLoading === splitSpace.id || splitSpace.name === "Default"}
+                      title={blocked ?? undefined}
+                    >
+                      {deleteLoading === splitSpace.id ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                      Delete
+                    </Button>
                   </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Panel>
       )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingSplitSpace ? "Rename space" : "New space"}</DialogTitle>
+            <DialogDescription>
+              {editingSplitSpace
+                ? "People and expenses stay as they are."
+                : "You'll add people to it next. Expenses never mix between spaces."}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="name">Name</Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData({ name: e.target.value })}
+                placeholder="e.g. Koramangala flat, Goa trip"
+                maxLength={60}
+                autoFocus
+                required
+              />
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingSplitSpace(null);
+                  setFormData({ name: "" });
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={submitLoading}>
+                {submitLoading ? <Loader2 className="animate-spin" /> : null}
+                {editingSplitSpace ? "Save" : "Create space"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {splitSpaceToDelete && deleteBlockedReason(splitSpaceToDelete)
+                ? `"${splitSpaceToDelete.name}" can't be deleted yet`
+                : `Delete "${splitSpaceToDelete?.name}"?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {splitSpaceToDelete?.name === "Default" ? (
-                <span className="text-destructive font-semibold">
-                  Cannot delete the default SplitSpace. This is your primary space and cannot be removed.
-                </span>
-              ) : (
+                "Default is your primary space and can't be removed."
+              ) : splitSpaceToDelete &&
+                (splitSpaceToDelete.flatmatesCount > 0 || splitSpaceToDelete.expensesCount > 0) ? (
                 <>
-                  This will permanently delete the SplitSpace "{splitSpaceToDelete?.name}". This action
-                  cannot be undone.
-                  {splitSpaceToDelete &&
-                    (splitSpaceToDelete.flatmatesCount > 0 || splitSpaceToDelete.expensesCount > 0) && (
-                      <span className="block mt-2 text-destructive font-semibold">
-                        Warning: This SplitSpace has {splitSpaceToDelete.flatmatesCount} flatmate(s) and{" "}
-                        {splitSpaceToDelete.expensesCount} expense(s). You must remove them first.
-                      </span>
-                    )}
+                  It still has {splitSpaceToDelete.flatmatesCount}{" "}
+                  {splitSpaceToDelete.flatmatesCount === 1 ? "person" : "people"} and{" "}
+                  {splitSpaceToDelete.expensesCount}{" "}
+                  {splitSpaceToDelete.expensesCount === 1 ? "expense" : "expenses"}. Remove them first so
+                  nothing is lost by accident.
                 </>
+              ) : (
+                "The space is empty. Deleting it can't be undone."
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={
-                splitSpaceToDelete
-                  ? splitSpaceToDelete.name === "Default" ||
-                    splitSpaceToDelete.flatmatesCount > 0 ||
-                    splitSpaceToDelete.expensesCount > 0
-                  : false
-              }
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
+            <AlertDialogCancel>
+              {splitSpaceToDelete && deleteBlockedReason(splitSpaceToDelete) ? "OK" : "Cancel"}
+            </AlertDialogCancel>
+            {splitSpaceToDelete && !deleteBlockedReason(splitSpaceToDelete) && (
+              <AlertDialogAction
+                onClick={handleDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete space
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -423,4 +406,3 @@ const SplitSpaces = () => {
 };
 
 export default SplitSpaces;
-
