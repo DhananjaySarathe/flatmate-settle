@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { db, errorCode } from "@/lib/db";
 
 interface SplitSpace {
   id: string;
@@ -20,92 +20,108 @@ const SplitSpaceContext = createContext<SplitSpaceContextType | undefined>(undef
 
 const STORAGE_KEY = "selectedSplitSpaceId";
 
+const readStoredId = () => {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const writeStoredId = (id: string | null) => {
+  try {
+    if (id) localStorage.setItem(STORAGE_KEY, id);
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable (private mode); selection still works in memory.
+  }
+};
+
+/** Keep the current pick if it still exists, else the stored pick, else "Default", else the first. */
+const pickSpace = (spaces: SplitSpace[], currentId: string | null): SplitSpace | null => {
+  if (spaces.length === 0) return null;
+  const byId = (id: string | null) => (id ? spaces.find((s) => s.id === id) : undefined);
+  return byId(currentId) ?? byId(readStoredId()) ?? spaces.find((s) => s.name === "Default") ?? spaces[0];
+};
+
 export const SplitSpaceProvider = ({ children }: { children: ReactNode }) => {
   const [selectedSplitSpace, setSelectedSplitSpaceState] = useState<SplitSpace | null>(null);
   const [splitSpaces, setSplitSpaces] = useState<SplitSpace[]>([]);
   const [loading, setLoading] = useState(true);
+  const selectedIdRef = useRef<string | null>(null);
+  // Whose spaces are loaded; lets a repeated SIGNED_IN for the same user skip the reload.
+  const userIdRef = useRef<string | null>(null);
 
-  const fetchSplitSpaces = async () => {
+  const select = useCallback((space: SplitSpace | null) => {
+    selectedIdRef.current = space?.id ?? null;
+    setSelectedSplitSpaceState(space);
+    writeStoredId(space?.id ?? null);
+  }, []);
+
+  const fetchSplitSpaces = useCallback(async () => {
     try {
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } = await db.auth.getUser();
+      userIdRef.current = user?.id ?? null;
       if (!user) {
-        setLoading(false);
+        setSplitSpaces([]);
+        selectedIdRef.current = null;
+        setSelectedSplitSpaceState(null);
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("split_spaces")
         .select("*")
         .eq("created_by", user.id)
         .order("created_at", { ascending: true });
 
       if (error) {
-        // If table doesn't exist yet, that's okay - migrations haven't run
-        if (error.message?.includes("does not exist") || error.code === "42P01") {
+        // The table only exists once the split-space migrations have run.
+        if (error.message?.includes("does not exist") || errorCode(error) === "42P01") {
           console.warn("split_spaces table doesn't exist yet. Run migrations first.");
           setSplitSpaces([]);
-          setLoading(false);
           return;
         }
         throw error;
       }
 
-      setSplitSpaces(data || []);
-
-      // If no split space is selected, select the first one (or default)
-      if (!selectedSplitSpace && data && data.length > 0) {
-        const storedId = localStorage.getItem(STORAGE_KEY);
-        const splitSpaceToSelect = storedId
-          ? data.find((ss) => ss.id === storedId) || data[0]
-          : data.find((ss) => ss.name === "Default") || data[0];
-        setSelectedSplitSpaceState(splitSpaceToSelect);
-        localStorage.setItem(STORAGE_KEY, splitSpaceToSelect.id);
-      }
+      const spaces = (data ?? []) as SplitSpace[];
+      setSplitSpaces(spaces);
+      // Replace the selected object too, so a rename shows up immediately.
+      const next = pickSpace(spaces, selectedIdRef.current);
+      if (next) select(next);
     } catch (error) {
       console.error("Error fetching split spaces:", error);
       setSplitSpaces([]);
     } finally {
       setLoading(false);
     }
-  };
-
-  const setSelectedSplitSpace = (splitSpace: SplitSpace | null) => {
-    setSelectedSplitSpaceState(splitSpace);
-    if (splitSpace) {
-      localStorage.setItem(STORAGE_KEY, splitSpace.id);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  };
+  }, [select]);
 
   useEffect(() => {
     fetchSplitSpaces();
-  }, []);
 
-  // Load selected split space from localStorage on mount
-  useEffect(() => {
-    if (splitSpaces.length > 0 && !selectedSplitSpace) {
-      const storedId = localStorage.getItem(STORAGE_KEY);
-      if (storedId) {
-        const found = splitSpaces.find((ss) => ss.id === storedId);
-        if (found) {
-          setSelectedSplitSpaceState(found);
-        } else {
-          // If stored ID doesn't exist, select default or first
-          const defaultSpace = splitSpaces.find((ss) => ss.name === "Default") || splitSpaces[0];
-          setSelectedSplitSpaceState(defaultSpace);
-          localStorage.setItem(STORAGE_KEY, defaultSpace.id);
-        }
-      } else {
-        // No stored selection, select default or first
-        const defaultSpace = splitSpaces.find((ss) => ss.name === "Default") || splitSpaces[0];
-        setSelectedSplitSpaceState(defaultSpace);
-        localStorage.setItem(STORAGE_KEY, defaultSpace.id);
+    // The provider sits above the router, so it must follow sign-in and sign-out
+    // that happen without a page reload.
+    const {
+      data: { subscription },
+    } = db.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user.id !== userIdRef.current) {
+        // Hold pages in their loading state so nothing queries without a space.
+        setLoading(true);
+        fetchSplitSpaces();
+      } else if (event === "SIGNED_OUT") {
+        userIdRef.current = null;
+        setSplitSpaces([]);
+        selectedIdRef.current = null;
+        setSelectedSplitSpaceState(null);
+        setLoading(false);
       }
-    }
-  }, [splitSpaces]);
+    });
+    return () => subscription.unsubscribe();
+  }, [fetchSplitSpaces]);
 
   return (
     <SplitSpaceContext.Provider
@@ -113,7 +129,7 @@ export const SplitSpaceProvider = ({ children }: { children: ReactNode }) => {
         selectedSplitSpace,
         splitSpaces,
         loading,
-        setSelectedSplitSpace,
+        setSelectedSplitSpace: select,
         refreshSplitSpaces: fetchSplitSpaces,
       }}
     >
@@ -129,4 +145,3 @@ export const useSplitSpace = () => {
   }
   return context;
 };
-

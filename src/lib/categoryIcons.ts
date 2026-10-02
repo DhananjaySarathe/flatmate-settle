@@ -1,0 +1,61 @@
+import {
+  Car,
+  Clapperboard,
+  Coffee,
+  Droplets,
+  Dumbbell,
+  Flame,
+  Fuel,
+  Gift,
+  GraduationCap,
+  HeartPulse,
+  House,
+  type LucideIcon,
+  PawPrint,
+  Plane,
+  Receipt,
+  Repeat,
+  Shirt,
+  ShoppingBag,
+  ShoppingBasket,
+  Smartphone,
+  Tag,
+  UtensilsCrossed,
+  Wifi,
+  Wine,
+  Wrench,
+  Zap,
+} from "lucide-react";
+
+// Default categories first (seeded by the categories migration), then common custom names.
+const MATCHERS: [RegExp, LucideIcon][] = [
+  [/^food|restaurant|dinner|lunch|breakfast|snack|swiggy|zomato/i, UtensilsCrossed],
+  [/^travel|trip|flight|train|hotel|stay/i, Plane],
+  [/^rent|house|home|maintenance fee/i, House],
+  [/^grocer|milk|vegetable|kirana/i, ShoppingBasket],
+  [/^utilit|electric|power|bill/i, Zap],
+  [/^fuel|petrol|diesel/i, Fuel],
+  [/^shop|cloth|apparel/i, ShoppingBag],
+  [/^misc|other|general/i, Receipt],
+  [/internet|wifi|broadband/i, Wifi],
+  [/cab|taxi|uber|ola|auto|transport|parking/i, Car],
+  [/movie|entertain|netflix|show|concert/i, Clapperboard],
+  [/coffee|cafe|tea|chai/i, Coffee],
+  [/drink|bar|beer|party/i, Wine],
+  [/water/i, Droplets],
+  [/gas|cylinder|lpg/i, Flame],
+  [/health|medic|doctor|pharma/i, HeartPulse],
+  [/gift/i, Gift],
+  [/phone|mobile|recharge/i, Smartphone],
+  [/subscri/i, Repeat],
+  [/gym|fitness|sport/i, Dumbbell],
+  [/pet/i, PawPrint],
+  [/laundry|dry clean/i, Shirt],
+  [/repair|plumb|fix/i, Wrench],
+  [/course|school|book|education/i, GraduationCap],
+];
+
+export const iconForCategory = (name?: string | null): LucideIcon => {
+  if (!name) return Tag;
+  return MATCHERS.find(([re]) => re.test(name))?.[1] ?? Tag;
+};

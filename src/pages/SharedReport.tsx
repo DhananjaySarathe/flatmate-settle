@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { format } from "date-fns";
-import { Loader2, Receipt, AlertTriangle } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
+import { ArrowRight, Link2Off, Loader2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PersonAvatar } from "@/components/PersonAvatar";
+import { NetLabel } from "@/components/NetLabel";
+import { CategoryIcon } from "@/components/CategoryIcon";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import SharedMyCost from "@/components/SharedMyCost";
-import type { ReportSnapshot, SnapshotBalance } from "@/lib/settlement";
+import { db } from "@/lib/db";
+import type { ReportSnapshot } from "@/lib/settlement";
+import { formatMoney, formatRange, parseDateOnly, plural } from "@/lib/format";
 
 interface SharedRow {
   split_space_name: string;
@@ -18,21 +20,12 @@ interface SharedRow {
   created_at: string;
 }
 
-const formatINR = (n: number) =>
-  `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-const statusBadge = (status: SnapshotBalance["status"]) => {
-  if (status === "settled")
-    return <Badge variant="secondary">Settled</Badge>;
-  if (status === "owes") return <Badge>Is Owed</Badge>;
-  return <Badge variant="destructive">Owes</Badge>;
-};
-
 export default function SharedReport() {
   const { token } = useParams<{ token: string }>();
   const [loading, setLoading] = useState(true);
   const [row, setRow] = useState<SharedRow | null>(null);
   const [notFound, setNotFound] = useState(false);
+  useDocumentTitle(row ? `${row.snapshot.splitSpaceName} · settle-up` : "Shared summary");
 
   useEffect(() => {
     if (!token) {
@@ -41,16 +34,13 @@ export default function SharedReport() {
       return;
     }
     const load = async () => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("shared_reports")
         .select("split_space_name, from_date, to_date, snapshot, created_at")
         .eq("token", token)
         .maybeSingle();
-      if (error || !data) {
-        setNotFound(true);
-      } else {
-        setRow(data as unknown as SharedRow);
-      }
+      if (error || !data) setNotFound(true);
+      else setRow(data as unknown as SharedRow);
       setLoading(false);
     };
     load();
@@ -58,225 +48,146 @@ export default function SharedReport() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="grid min-h-dvh place-items-center bg-background">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
       </div>
     );
   }
 
   if (notFound || !row) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <Card className="max-w-md w-full">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-muted-foreground" />
-              Link not found
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              This shared report doesn't exist or has been removed.
-            </p>
-            <Button asChild variant="outline">
-              <Link to="/auth">Go to ExpenseWaale</Link>
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="grid min-h-dvh place-items-center bg-background p-6">
+        <div className="w-full max-w-sm rounded-2xl border bg-card p-6 text-center">
+          <span className="mx-auto grid size-11 place-items-center rounded-full bg-secondary text-muted-foreground">
+            <Link2Off className="size-5" />
+          </span>
+          <h1 className="mt-4 text-lg font-semibold">This link doesn't work</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The shared summary doesn't exist or was removed. Ask whoever sent it for a new link.
+          </p>
+          <Button asChild variant="outline" className="mt-5">
+            <Link to="/auth">Go to ExpenseWaale</Link>
+          </Button>
+        </div>
       </div>
     );
   }
 
   const { snapshot } = row;
+  const from = parseDateOnly(snapshot.dateRange.from);
+  const to = parseDateOnly(snapshot.dateRange.to);
+  const total = snapshot.expenses.reduce((sum, e) => sum + e.amount, 0);
+  const sortedBalances = [...snapshot.balances].sort((a, b) => b.balance - a.balance);
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto p-4 sm:p-6 max-w-5xl space-y-4 sm:space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-2xl sm:text-3xl font-bold">
-            {snapshot.splitSpaceName}
-          </h1>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <Badge variant="secondary">
-              {format(new Date(snapshot.dateRange.from), "MMM d, yyyy")} –{" "}
-              {format(new Date(snapshot.dateRange.to), "MMM d, yyyy")}
-            </Badge>
-            <span>
-              Generated {format(new Date(snapshot.generatedAt), "MMM d, yyyy h:mm a")}
-            </span>
-          </div>
+    <div className="min-h-dvh bg-background">
+      <header className="border-b bg-card">
+        <div className="mx-auto flex max-w-3xl items-center gap-2.5 px-4 py-3 sm:px-6">
+          <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
+            <Wallet className="size-3.5" />
+          </span>
+          <span className="text-sm font-semibold">ExpenseWaale</span>
+          <span className="ml-auto text-xs text-muted-foreground">Read-only summary</span>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6 sm:py-8">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{snapshot.splitSpaceName}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {formatRange(from, to)} · {plural(snapshot.expenses.length, "expense")} · {formatMoney(total)} spent
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Snapshot from {format(new Date(snapshot.generatedAt), "MMM d, yyyy, h:mm a")}. Changes made after that
+            aren't shown.
+          </p>
         </div>
 
-        <Tabs defaultValue="summary" className="w-full">
-          <TabsList className="w-full sm:w-auto grid grid-cols-2 sm:inline-flex sm:grid-cols-none gap-y-1 sm:gap-y-0 h-auto sm:h-10">
-            <TabsTrigger value="summary">Summary</TabsTrigger>
-            <TabsTrigger value="settlements">Settlements</TabsTrigger>
-            <TabsTrigger value="expenses">Expenses</TabsTrigger>
-            <TabsTrigger value="my-cost">My Cost</TabsTrigger>
-          </TabsList>
+        <SharedMyCost snapshot={snapshot} />
 
-          <TabsContent value="summary">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg sm:text-xl">
-                  Balance Summary
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {snapshot.balances.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No balances.</p>
-                ) : (
-                  <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-                    <table className="w-full border-collapse min-w-[560px] sm:min-w-0">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="text-left p-2 text-xs sm:text-sm">Name</th>
-                          <th className="text-right p-2 text-xs sm:text-sm">Paid</th>
-                          <th className="text-right p-2 text-xs sm:text-sm">Owed</th>
-                          <th className="text-right p-2 text-xs sm:text-sm">Net</th>
-                          <th className="text-right p-2 text-xs sm:text-sm">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {snapshot.balances.map((b) => (
-                          <tr key={b.name} className="border-b last:border-0">
-                            <td className="p-2 text-sm font-medium">{b.name}</td>
-                            <td className="p-2 text-sm text-right">
-                              {formatINR(b.totalPaid)}
-                            </td>
-                            <td className="p-2 text-sm text-right">
-                              {formatINR(b.totalOwed)}
-                            </td>
-                            <td
-                              className={
-                                "p-2 text-sm text-right font-medium " +
-                                (b.balance > 0.01
-                                  ? "text-green-600"
-                                  : b.balance < -0.01
-                                  ? "text-red-600"
-                                  : "")
-                              }
-                            >
-                              {b.balance >= 0 ? "+" : "-"}
-                              {formatINR(Math.abs(b.balance))}
-                            </td>
-                            <td className="p-2 text-right">
-                              {statusBadge(b.status)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+        <section className="rounded-2xl border bg-card px-5 pb-2 pt-4 sm:px-6">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-semibold">Who pays whom</h2>
+            <span className="text-sm text-muted-foreground">
+              {snapshot.settlements.length === 0 ? "Nothing to pay" : plural(snapshot.settlements.length, "payment")}
+            </span>
+          </div>
+          {snapshot.settlements.length === 0 ? (
+            <p className="py-5 text-sm text-muted-foreground">Everyone was square for this period.</p>
+          ) : (
+            <ul className="mt-1 divide-y">
+              {snapshot.settlements.map((s, idx) => (
+                <li key={idx} className="flex items-center gap-2 py-3">
+                  <PersonAvatar name={s.from} size="sm" className="hidden sm:inline-flex" />
+                  <span className="truncate text-sm font-medium">{s.from}</span>
+                  <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" aria-label="pays" />
+                  <PersonAvatar name={s.to} size="sm" className="hidden sm:inline-flex" />
+                  <span className="truncate text-sm font-medium">{s.to}</span>
+                  <span className="ml-auto shrink-0 text-sm font-semibold tabular-nums">{formatMoney(s.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-2xl border bg-card px-5 pb-2 pt-4 sm:px-6">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-semibold">Balances</h2>
+            <span className="text-sm text-muted-foreground">Paid minus share</span>
+          </div>
+          {sortedBalances.length === 0 ? (
+            <p className="py-5 text-sm text-muted-foreground">No balances.</p>
+          ) : (
+            <ul className="mt-1 divide-y">
+              {sortedBalances.map((b) => (
+                <li key={b.name} className="flex items-center gap-3 py-3">
+                  <PersonAvatar name={b.name} size="md" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate text-sm font-medium">{b.name}</span>
+                      <NetLabel value={b.balance} className="shrink-0 text-sm" />
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+                      Paid {formatMoney(b.totalPaid)} · Share {formatMoney(b.totalOwed)}
+                    </div>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-          <TabsContent value="settlements">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg sm:text-xl">
-                  Settlement Instructions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {snapshot.settlements.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    All settled up — no transactions needed.
-                  </p>
-                ) : (
-                  <ol className="space-y-2">
-                    {snapshot.settlements.map((s, idx) => (
-                      <li
-                        key={idx}
-                        className="flex items-center justify-between gap-3 p-3 rounded-md border border-border/50 bg-secondary/20"
-                      >
-                        <div className="text-sm">
-                          <span className="font-medium">{s.from}</span>
-                          <span className="text-muted-foreground"> → </span>
-                          <span className="font-medium">{s.to}</span>
-                        </div>
-                        <div className="text-sm font-semibold">
-                          {formatINR(s.amount)}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="expenses">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-                  <Receipt className="w-4 h-4 sm:w-5 sm:h-5" />
-                  All Expenses ({snapshot.expenses.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {snapshot.expenses.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No expenses in this period.
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-                    <table className="w-full border-collapse min-w-[700px] sm:min-w-0">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="text-left p-2 text-xs sm:text-sm">Date</th>
-                          <th className="text-left p-2 text-xs sm:text-sm">Title</th>
-                          <th className="text-left p-2 text-xs sm:text-sm">Paid By</th>
-                          <th className="text-left p-2 text-xs sm:text-sm">Split Between</th>
-                          <th className="text-right p-2 text-xs sm:text-sm">Per Person</th>
-                          <th className="text-right p-2 text-xs sm:text-sm">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {snapshot.expenses.map((e, idx) => (
-                          <tr key={idx} className="border-b last:border-0 align-top">
-                            <td className="p-2 text-sm whitespace-nowrap">
-                              {format(new Date(e.date), "MMM d, yyyy")}
-                            </td>
-                            <td className="p-2 text-sm">
-                              <div className="font-medium">{e.title}</div>
-                              {e.category && (
-                                <Badge variant="secondary" className="mt-1 text-xs">
-                                  {e.category}
-                                </Badge>
-                              )}
-                            </td>
-                            <td className="p-2 text-sm">{e.paidBy}</td>
-                            <td className="p-2 text-sm">
-                              {e.splitBetween.join(", ")}
-                            </td>
-                            <td className="p-2 text-sm text-right whitespace-nowrap">
-                              {formatINR(e.perPerson)}
-                            </td>
-                            <td className="p-2 text-sm text-right font-medium whitespace-nowrap">
-                              {formatINR(e.amount)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+        <section className="rounded-2xl border bg-card px-5 pb-2 pt-4 sm:px-6">
+          <h2 className="font-semibold">
+            Expenses <span className="font-normal text-muted-foreground">({snapshot.expenses.length})</span>
+          </h2>
+          {snapshot.expenses.length === 0 ? (
+            <p className="py-5 text-sm text-muted-foreground">No expenses in this period.</p>
+          ) : (
+            <ul className="mt-1 divide-y">
+              {snapshot.expenses.map((e, idx) => (
+                <li key={idx} className="flex items-start gap-3 py-3">
+                  <CategoryIcon name={e.category} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate font-medium">{e.title}</span>
+                      <span className="shrink-0 font-semibold tabular-nums">{formatMoney(e.amount)}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-baseline justify-between gap-3 text-sm text-muted-foreground">
+                      <span className="min-w-0">
+                        {e.paidBy} paid · {formatMoney(e.perPerson)} each for {e.splitBetween.join(", ")}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{format(parseDateOnly(e.date), "MMM d")}</span>
+                    </div>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-          <TabsContent value="my-cost">
-            <SharedMyCost snapshot={snapshot} />
-          </TabsContent>
-        </Tabs>
-
-        <p className="text-xs text-muted-foreground text-center pt-4">
-          Shared via ExpenseWaale
-        </p>
-      </div>
+        <p className="pt-2 text-center text-xs text-muted-foreground">Shared via ExpenseWaale</p>
+      </main>
     </div>
   );
 }

@@ -1,26 +1,33 @@
-import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { useMemo } from "react";
+import { format } from "date-fns";
+import autoTable from "jspdf-autotable";
+import type jsPDF from "jspdf";
+import { toast } from "sonner";
 import {
-  Trophy,
-  Medal,
   Award,
   Crown,
   Download,
-  Loader2,
-  Sparkles,
-  Heart,
+  EyeOff,
   Flame,
-  Pizza,
-  ShoppingBasket,
   Fuel,
+  Heart,
+  type LucideIcon,
+  Medal,
+  Milk,
+  Pizza,
+  RotateCw,
+  Trophy,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { useSplitSpace } from "@/contexts/SplitSpaceContext";
-import autoTable from "jspdf-autotable";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/PageHeader";
+import { InsightsTabs } from "@/components/InsightsTabs";
+import { EmptyState } from "@/components/EmptyState";
+import { PersonAvatar } from "@/components/PersonAvatar";
+import { useSpaceData } from "@/hooks/useSpaceData";
+import { useMe } from "@/hooks/useMe";
+import { errorMessage } from "@/lib/db";
+import { formatMoney, plural } from "@/lib/format";
 import {
   drawPdfHeader,
   drawPdfFooter,
@@ -30,30 +37,7 @@ import {
   createPdfDoc,
   pdfAmount,
 } from "@/lib/pdfStyle";
-import { format } from "date-fns";
-
-interface Flatmate {
-  id: string;
-  name: string;
-}
-
-interface Category {
-  id: string;
-  name: string;
-}
-
-interface Expense {
-  id: string;
-  title: string;
-  amount: number;
-  date: string;
-  paid_by: string;
-  category_id?: string;
-  categories?: {
-    name: string;
-  };
-  expense_splits: { flatmate_id: string }[];
-}
+import { cn } from "@/lib/utils";
 
 interface PersonStats {
   id: string;
@@ -64,157 +48,69 @@ interface PersonStats {
   categoryTotals: Record<string, number>;
 }
 
+const lastTableY = (doc: jsPDF, fallback: number) =>
+  (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || fallback;
+
 export default function Leaderboard() {
-  const {
-    selectedSplitSpace,
-    splitSpaces,
-    loading: contextLoading,
-  } = useSplitSpace();
-  const [loading, setLoading] = useState(true);
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [personStats, setPersonStats] = useState<PersonStats[]>([]);
-  const [pdfLoading, setPdfLoading] = useState(false);
+  const { flatmates, expenses, space, isLoading, error, refetch } = useSpaceData();
+  const { meId } = useMe(flatmates);
 
-  useEffect(() => {
-    if (contextLoading) return;
-    if (splitSpaces.length === 0 || !selectedSplitSpace) {
-      setLoading(false);
-      return;
-    }
-    fetchData();
-  }, [selectedSplitSpace, splitSpaces.length, contextLoading]);
-
-  const fetchData = async () => {
-    if (!selectedSplitSpace) return;
-
-    setLoading(true);
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      const [flatmatesRes, expensesRes, categoriesRes] = await Promise.all([
-        supabase
-          .from("flatmates")
-          .select("id, name")
-          .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-          .order("name"),
-        supabase
-          .from("expenses")
-          .select(
-            `
-            *,
-            categories (name),
-            expense_splits (flatmate_id)
-          `
-          )
-          .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`)
-          .order("date", { ascending: false }),
-        user
-          ? supabase
-              .from("categories")
-              .select("id, name")
-              .eq("created_by", user.id)
-              .order("name")
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-
-      if (flatmatesRes.error) throw flatmatesRes.error;
-      if (expensesRes.error) throw expensesRes.error;
-      if (categoriesRes.error) throw categoriesRes.error;
-
-      setFlatmates(flatmatesRes.data || []);
-      setExpenses(expensesRes.data || []);
-      setCategories(categoriesRes.data || []);
-
-      // Calculate stats
-      const stats: PersonStats[] = flatmatesRes.data?.map((flatmate) => {
-        const paidExpenses = expensesRes.data?.filter(
-          (exp) => exp.paid_by === flatmate.id
-        ) || [];
-        const totalPaid = paidExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-        const highestExpense =
-          paidExpenses.length > 0
-            ? Math.max(...paidExpenses.map((exp) => exp.amount))
-            : 0;
-
-        // Category totals
-        const categoryTotals: Record<string, number> = {};
-        paidExpenses.forEach((exp) => {
-          if (exp.category_id && exp.categories) {
-            const catName = exp.categories.name;
-            categoryTotals[catName] = (categoryTotals[catName] || 0) + exp.amount;
-          }
-        });
-
-        return {
-          id: flatmate.id,
-          name: flatmate.name,
-          totalPaid,
-          expenseCount: paidExpenses.length,
-          highestExpense,
-          categoryTotals,
-        };
-      }) || [];
-
-      setPersonStats(stats.sort((a, b) => b.totalPaid - a.totalPaid));
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-      toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const personStats = useMemo<PersonStats[]>(() => {
+    const stats = flatmates.map((flatmate) => {
+      const paidExpenses = expenses.filter((exp) => exp.paid_by === flatmate.id);
+      const totalPaid = paidExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+      const highestExpense = paidExpenses.length > 0 ? Math.max(...paidExpenses.map((exp) => exp.amount)) : 0;
+      const categoryTotals: Record<string, number> = {};
+      paidExpenses.forEach((exp) => {
+        if (exp.category_id && exp.categories) {
+          const catName = exp.categories.name;
+          categoryTotals[catName] = (categoryTotals[catName] || 0) + exp.amount;
+        }
+      });
+      return { id: flatmate.id, name: flatmate.name, totalPaid, expenseCount: paidExpenses.length, highestExpense, categoryTotals };
+    });
+    return stats.sort((a, b) => b.totalPaid - a.totalPaid);
+  }, [flatmates, expenses]);
 
   const topPayers = personStats.slice(0, 3);
   const mostGenerous = personStats[0];
-  const silentAssassin = personStats
-    .filter((p) => p.expenseCount > 0)
-    .sort((a, b) => a.totalPaid - b.totalPaid)[0];
-  const bigSpender = personStats.sort((a, b) => b.highestExpense - a.highestExpense)[0];
+  const silentAssassin = personStats.filter((p) => p.expenseCount > 0).sort((a, b) => a.totalPaid - b.totalPaid)[0];
+  // Sort a copy: sorting personStats itself used to reorder the rankings below by biggest single expense.
+  const bigSpender = [...personStats].sort((a, b) => b.highestExpense - a.highestExpense)[0];
 
-  // Category-specific badges
-  const getCategoryLeader = (categoryName: string) => {
-    return personStats.reduce(
+  const getCategoryLeader = (categoryName: string) =>
+    personStats.reduce<PersonStats & { total: number }>(
       (leader, person) => {
         const categoryTotal = person.categoryTotals[categoryName] || 0;
         return categoryTotal > leader.total ? { ...person, total: categoryTotal } : leader;
       },
-      { name: "N/A", total: 0 } as PersonStats & { total: number }
+      { id: "", name: "N/A", totalPaid: 0, expenseCount: 0, highestExpense: 0, categoryTotals: {}, total: 0 }
     );
-  };
 
   const milkBhai = getCategoryLeader("Groceries");
   const fuelKing = getCategoryLeader("Fuel");
   const foodie = getCategoryLeader("Food");
 
-  const generateLeaderboardPDF = async () => {
-    setPdfLoading(true);
+  const generateLeaderboardPDF = () => {
     try {
       const doc = createPdfDoc();
-
-      let y = drawPdfHeader(doc, {
+      const y = drawPdfHeader(doc, {
         title: "Leaderboard",
-        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
+        subtitle: space ? space.name : undefined,
         meta: format(new Date(), "MMM d, yyyy"),
       });
 
-      y = drawSectionTitle(doc, "Top 3 Payers", y);
-
-      const topPayersData = topPayers.map((person, idx) => [
-        idx === 0 ? "Gold" : idx === 1 ? "Silver" : "Bronze",
-        person.name,
-        pdfAmount(person.totalPaid),
-        person.expenseCount.toString(),
-      ]);
-
+      const titleY = drawSectionTitle(doc, "Top 3 Payers", y);
       autoTable(doc, {
         ...accentTableStyles({
-          startY: y + 2,
+          startY: titleY + 2,
           head: [["Rank", "Name", "Total Paid", "Expenses"]],
-          body: topPayersData,
+          body: topPayers.map((person, idx) => [
+            idx === 0 ? "Gold" : idx === 1 ? "Silver" : "Bronze",
+            person.name,
+            pdfAmount(person.totalPaid),
+            person.expenseCount.toString(),
+          ]),
           columnStyles: {
             0: { fontStyle: "bold" },
             2: { halign: "right", fontStyle: "bold" },
@@ -224,10 +120,7 @@ export default function Leaderboard() {
         }),
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || y;
-
-      const sectionY = drawSectionTitle(doc, "Fun Stats & Badges", finalY + 14);
-
+      const sectionY = drawSectionTitle(doc, "Fun Stats & Badges", lastTableY(doc, titleY) + 14);
       const funStatsData = [
         ["Most Generous", mostGenerous?.name || "N/A", mostGenerous ? pdfAmount(mostGenerous.totalPaid) : "Rs. 0.00"],
         ["Silent Assassin", silentAssassin?.name || "N/A", silentAssassin ? pdfAmount(silentAssassin.totalPaid) : "Rs. 0.00"],
@@ -236,467 +129,187 @@ export default function Leaderboard() {
         ["Fuel King", fuelKing.name, pdfAmount(fuelKing.total)],
         ["Foodie", foodie.name, pdfAmount(foodie.total)],
       ];
-
       autoTable(doc, {
         ...tableStyles({
           startY: sectionY + 2,
           head: [["Badge", "Winner", "Amount"]],
           body: funStatsData,
-          columnStyles: {
-            2: { halign: "right", fontStyle: "bold" },
-          },
+          columnStyles: { 2: { halign: "right", fontStyle: "bold" } },
           didDrawPage: () => drawPdfFooter(doc),
         }),
       });
 
       drawPdfFooter(doc);
-      doc.save(`leaderboard_${selectedSplitSpace?.name || "default"}.pdf`);
-      toast.success("Leaderboard PDF downloaded successfully!");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      toast.error("Failed to generate PDF");
-    } finally {
-      setPdfLoading(false);
+      doc.save(`leaderboard_${space?.name || "default"}.pdf`);
+      toast.success("PDF downloaded");
+    } catch (err) {
+      console.error("Error generating PDF:", err);
+      toast.error("Couldn't create the PDF");
     }
   };
 
-  if (!selectedSplitSpace && splitSpaces.length > 0) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const nameFor = (p: { id: string; name: string }) => (p.id === meId ? "You" : p.name);
+  const money0 = (n: number) => formatMoney(n, { decimals: 0 });
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1 flex items-center gap-2">
-            <Trophy className="w-7 h-7 sm:w-9 sm:h-9 text-amber-500" />
-            Leaderboard
-          </h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            Brag rights, fairly distributed.
-          </p>
-          {selectedSplitSpace && (
-            <p className="text-xs text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        <Button
-          onClick={generateLeaderboardPDF}
-          disabled={pdfLoading}
-          variant="outline"
-          className="self-start sm:self-auto"
-        >
-          {pdfLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" />
-              Download PDF
-            </>
-          )}
-        </Button>
-      </div>
-
-      {/* Podium */}
-      {topPayers.length > 0 && (
-        <Card className="overflow-hidden">
-          <CardContent className="p-4 sm:p-8">
-            <div className="grid grid-cols-3 gap-2 sm:gap-4 items-end">
-              {/* 2nd place */}
-              {topPayers[1] ? (
-                <PodiumStep place={2} person={topPayers[1]} />
-              ) : (
-                <PodiumPlaceholder place={2} />
-              )}
-              {/* 1st place — taller */}
-              <PodiumStep place={1} person={topPayers[0]} />
-              {/* 3rd place */}
-              {topPayers[2] ? (
-                <PodiumStep place={3} person={topPayers[2]} />
-              ) : (
-                <PodiumPlaceholder place={3} />
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Fun Stats / Badges */}
-      <div>
-        <h2 className="text-xl sm:text-2xl font-bold mb-3 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          Badges & Fun Stats
-        </h2>
-        <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {mostGenerous && (
-            <BadgeCard
-              icon={Heart}
-              emoji="💖"
-              title="Most Generous"
-              subtitle={`₹${mostGenerous.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })} paid in total`}
-              name={mostGenerous.name}
-              tone="rose"
-            />
-          )}
-          {silentAssassin && (
-            <BadgeCard
-              icon={Award}
-              emoji="🥷"
-              title="Silent Assassin"
-              subtitle={`Only ₹${silentAssassin.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })} — still in the game`}
-              name={silentAssassin.name}
-              tone="slate"
-            />
-          )}
-          {bigSpender && bigSpender.highestExpense > 0 && (
-            <BadgeCard
-              icon={Flame}
-              emoji="💥"
-              title="Big Spender"
-              subtitle={`₹${bigSpender.highestExpense.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on a single expense`}
-              name={bigSpender.name}
-              tone="amber"
-            />
-          )}
-          {milkBhai.total > 0 && (
-            <BadgeCard
-              icon={ShoppingBasket}
-              emoji="🥛"
-              title="Milk Bhai"
-              subtitle={`₹${milkBhai.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on groceries`}
-              name={milkBhai.name}
-              tone="accent"
-            />
-          )}
-          {fuelKing.total > 0 && (
-            <BadgeCard
-              icon={Fuel}
-              emoji="⛽"
-              title="Fuel King"
-              subtitle={`₹${fuelKing.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on fuel`}
-              name={fuelKing.name}
-              tone="orange"
-            />
-          )}
-          {foodie.total > 0 && (
-            <BadgeCard
-              icon={Pizza}
-              emoji="🍕"
-              title="Foodie"
-              subtitle={`₹${foodie.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })} on food`}
-              name={foodie.name}
-              tone="primary"
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Full rankings */}
-      {personStats.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Full Rankings</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Everyone, sorted by total paid
-            </p>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {personStats.map((person, idx) => (
-                <div
-                  key={person.id}
-                  className={cn(
-                    "flex items-center justify-between p-3 rounded-lg border transition-colors",
-                    idx === 0
-                      ? "bg-amber-50 border-amber-200"
-                      : "bg-secondary/40 border-border"
-                  )}
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <RankBadge rank={idx + 1} />
-                    <Avatar name={person.name} />
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{person.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {person.expenseCount} expense{person.expenseCount !== 1 ? "s" : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className="font-bold text-base sm:text-lg tabular-nums">
-                      ₹{person.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                    </div>
-                    {person.highestExpense > 0 && (
-                      <div className="text-xs text-muted-foreground">
-                        Max ₹{person.highestExpense.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ---- Sub-components ----
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return (parts[0]?.[0] ?? "?").toUpperCase() + (parts[1]?.[0]?.toUpperCase() ?? "");
-}
-
-function avatarColor(name: string): string {
-  const palette = [
-    "bg-rose-100 text-rose-700",
-    "bg-amber-100 text-amber-800",
-    "bg-emerald-100 text-emerald-800",
-    "bg-sky-100 text-sky-700",
-    "bg-violet-100 text-violet-700",
-    "bg-orange-100 text-orange-800",
-    "bg-teal-100 text-teal-700",
+  const badges: { show: boolean; icon: LucideIcon; title: string; winner?: { id: string; name: string }; detail: string }[] = [
+    {
+      show: !!mostGenerous && mostGenerous.totalPaid > 0,
+      icon: Heart,
+      title: "Most generous",
+      winner: mostGenerous,
+      detail: mostGenerous ? `${money0(mostGenerous.totalPaid)} paid in total` : "",
+    },
+    {
+      show: !!silentAssassin,
+      icon: EyeOff,
+      title: "Silent assassin",
+      winner: silentAssassin,
+      detail: silentAssassin ? `Only ${money0(silentAssassin.totalPaid)}, still in the game` : "",
+    },
+    {
+      show: !!bigSpender && bigSpender.highestExpense > 0,
+      icon: Flame,
+      title: "Big spender",
+      winner: bigSpender,
+      detail: bigSpender ? `${money0(bigSpender.highestExpense)} on a single expense` : "",
+    },
+    { show: milkBhai.total > 0, icon: Milk, title: "Milk Bhai", winner: milkBhai, detail: `${money0(milkBhai.total)} on groceries` },
+    { show: fuelKing.total > 0, icon: Fuel, title: "Fuel King", winner: fuelKing, detail: `${money0(fuelKing.total)} on fuel` },
+    { show: foodie.total > 0, icon: Pizza, title: "Foodie", winner: foodie, detail: `${money0(foodie.total)} on food` },
   ];
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h + name.charCodeAt(i)) % palette.length;
-  return palette[h];
-}
-
-function Avatar({ name, size = "md" }: { name: string; size?: "md" | "lg" }) {
-  const dim = size === "lg" ? "w-14 h-14 text-base" : "w-9 h-9 text-xs";
-  return (
-    <div
-      className={cn(
-        "rounded-full flex items-center justify-center font-bold flex-shrink-0",
-        dim,
-        avatarColor(name)
-      )}
-    >
-      {initials(name)}
-    </div>
-  );
-}
-
-function RankBadge({ rank }: { rank: number }) {
-  if (rank === 1)
-    return (
-      <div className="w-8 h-8 rounded-full bg-amber-400 text-amber-950 flex items-center justify-center text-sm font-bold flex-shrink-0">
-        🥇
-      </div>
-    );
-  if (rank === 2)
-    return (
-      <div className="w-8 h-8 rounded-full bg-slate-300 text-slate-800 flex items-center justify-center text-sm font-bold flex-shrink-0">
-        🥈
-      </div>
-    );
-  if (rank === 3)
-    return (
-      <div className="w-8 h-8 rounded-full bg-orange-300 text-orange-900 flex items-center justify-center text-sm font-bold flex-shrink-0">
-        🥉
-      </div>
-    );
-  return (
-    <div className="w-8 h-8 rounded-full bg-secondary text-muted-foreground flex items-center justify-center text-sm font-semibold flex-shrink-0">
-      #{rank}
-    </div>
-  );
-}
-
-function PodiumStep({ place, person }: { place: 1 | 2 | 3; person: PersonStats }) {
-  const config = {
-    1: {
-      height: "h-32 sm:h-40",
-      bg: "bg-gradient-to-b from-amber-300 to-amber-200",
-      border: "border-amber-400",
-      icon: <Crown className="w-5 h-5 sm:w-6 sm:h-6 text-amber-700" />,
-      label: "1st",
-      labelClass: "bg-amber-500 text-amber-50",
-    },
-    2: {
-      height: "h-24 sm:h-32",
-      bg: "bg-gradient-to-b from-slate-200 to-slate-100",
-      border: "border-slate-300",
-      icon: <Medal className="w-5 h-5 sm:w-6 sm:h-6 text-slate-500" />,
-      label: "2nd",
-      labelClass: "bg-slate-400 text-white",
-    },
-    3: {
-      height: "h-20 sm:h-24",
-      bg: "bg-gradient-to-b from-orange-200 to-orange-100",
-      border: "border-orange-300",
-      icon: <Award className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600" />,
-      label: "3rd",
-      labelClass: "bg-orange-400 text-orange-50",
-    },
-  }[place];
 
   return (
-    <div className="flex flex-col items-center">
-      <div className="flex flex-col items-center mb-2 text-center">
-        {config.icon}
-        <Avatar name={person.name} size="lg" />
-        <div className="font-bold text-sm sm:text-base mt-2 truncate max-w-full">
-          {person.name}
-        </div>
-        <div className="text-xs sm:text-sm text-muted-foreground tabular-nums">
-          ₹{person.totalPaid.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-        </div>
-        <div className="text-[10px] sm:text-xs text-muted-foreground">
-          {person.expenseCount} expense{person.expenseCount !== 1 ? "s" : ""}
-        </div>
-      </div>
-      <div
-        className={cn(
-          "w-full rounded-t-lg border-t-2 border-x flex items-center justify-center",
-          config.height,
-          config.bg,
-          config.border
-        )}
-      >
-        <span
-          className={cn(
-            "text-xs font-bold px-2.5 py-0.5 rounded-full",
-            config.labelClass
-          )}
-        >
-          {config.label}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PodiumPlaceholder({ place }: { place: 2 | 3 }) {
-  const height = place === 2 ? "h-24 sm:h-32" : "h-20 sm:h-24";
-  return (
-    <div className="flex flex-col items-center">
-      <div className="flex flex-col items-center mb-2 text-center opacity-40">
-        <div className="w-14 h-14 rounded-full border-2 border-dashed border-muted-foreground/30" />
-        <div className="text-xs text-muted-foreground mt-2">No one yet</div>
-      </div>
-      <div
-        className={cn(
-          "w-full rounded-t-lg border-t-2 border-x border-dashed border-muted-foreground/20 bg-secondary/30",
-          height
-        )}
+    <div className="space-y-5">
+      <PageHeader
+        title="Insights"
+        documentTitle="Leaderboard"
+        description={`All-time bragging rights${space ? ` in ${space.name}` : ""}. Ranked by who paid the most.`}
+        actions={
+          !isLoading &&
+          personStats.length > 0 && (
+            <Button variant="outline" onClick={generateLeaderboardPDF}>
+              <Download />
+              Download PDF
+            </Button>
+          )
+        }
       />
+      <InsightsTabs />
+
+      {isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-64 rounded-2xl" />
+          <Skeleton className="h-40 rounded-2xl" />
+        </div>
+      ) : error ? (
+        <EmptyState
+          icon={RotateCw}
+          title="Couldn't load the leaderboard"
+          action={<Button onClick={refetch}>Try again</Button>}
+          className="rounded-2xl border bg-card"
+        >
+          {errorMessage(error)}
+        </EmptyState>
+      ) : personStats.length === 0 || expenses.length === 0 ? (
+        <EmptyState icon={Trophy} title="No rankings yet" className="rounded-2xl border bg-card">
+          The leaderboard fills in once people start paying for things.
+        </EmptyState>
+      ) : (
+        <>
+          <section className="rounded-2xl border bg-card px-4 pb-0 pt-6 sm:px-8" aria-label="Top payers">
+            <div className="mx-auto grid max-w-xl grid-cols-3 items-end gap-2 sm:gap-4">
+              {[1, 0, 2].map((idx) => {
+                const person = topPayers[idx];
+                return person ? (
+                  <PodiumStep key={idx} place={(idx + 1) as 1 | 2 | 3} name={person.name} label={nameFor(person)} person={person} />
+                ) : (
+                  <div key={idx} />
+                );
+              })}
+            </div>
+          </section>
+
+          <section aria-label="Badges">
+            <h2 className="mb-3 font-semibold">Badges</h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {badges
+                .filter((b) => b.show && b.winner)
+                .map((b) => {
+                  const Icon = b.icon;
+                  return (
+                    <div key={b.title} className="flex items-center gap-3 rounded-2xl border bg-card p-4">
+                      <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                        <Icon className="size-5" strokeWidth={1.75} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-muted-foreground">{b.title}</p>
+                        <p className="truncate font-semibold">{nameFor(b.winner!)}</p>
+                        <p className="truncate text-xs text-muted-foreground">{b.detail}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border bg-card px-5 pb-2 pt-4 sm:px-6">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="font-semibold">Full rankings</h2>
+              <span className="text-sm text-muted-foreground">By total paid</span>
+            </div>
+            <ol className="mt-1 divide-y">
+              {personStats.map((person, idx) => (
+                <li key={person.id} className="flex items-center gap-3 py-3">
+                  <span className="w-6 text-center text-sm font-semibold text-muted-foreground tabular-nums">{idx + 1}</span>
+                  <PersonAvatar name={person.name} size="md" />
+                  <div className="min-w-0 flex-1">
+                    <div className={cn("truncate text-sm", person.id === meId ? "font-semibold" : "font-medium")}>
+                      {nameFor(person)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {plural(person.expenseCount, "expense")} paid
+                      {person.highestExpense > 0 && ` · biggest ${money0(person.highestExpense)}`}
+                    </div>
+                  </div>
+                  <span className="text-sm font-semibold tabular-nums">{money0(person.totalPaid)}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </>
+      )}
     </div>
   );
 }
 
-const BADGE_TONES: Record<
-  string,
-  { ring: string; bg: string; iconBg: string; iconText: string }
-> = {
-  primary: {
-    ring: "hover:border-primary/40",
-    bg: "from-primary/8 to-transparent",
-    iconBg: "bg-primary/10",
-    iconText: "text-primary",
-  },
-  accent: {
-    ring: "hover:border-accent/40",
-    bg: "from-accent/8 to-transparent",
-    iconBg: "bg-accent/10",
-    iconText: "text-accent",
-  },
-  amber: {
-    ring: "hover:border-amber-400",
-    bg: "from-amber-200/30 to-transparent",
-    iconBg: "bg-amber-100",
-    iconText: "text-amber-700",
-  },
-  rose: {
-    ring: "hover:border-rose-300",
-    bg: "from-rose-200/30 to-transparent",
-    iconBg: "bg-rose-100",
-    iconText: "text-rose-600",
-  },
-  slate: {
-    ring: "hover:border-slate-300",
-    bg: "from-slate-200/40 to-transparent",
-    iconBg: "bg-slate-100",
-    iconText: "text-slate-700",
-  },
-  orange: {
-    ring: "hover:border-orange-300",
-    bg: "from-orange-200/30 to-transparent",
-    iconBg: "bg-orange-100",
-    iconText: "text-orange-700",
-  },
-};
+const PODIUM = {
+  1: { height: "h-28 sm:h-36", fill: "bg-primary/15", icon: Crown, tint: "text-amber-600", label: "1st" },
+  2: { height: "h-20 sm:h-28", fill: "bg-secondary", icon: Medal, tint: "text-slate-500", label: "2nd" },
+  3: { height: "h-14 sm:h-20", fill: "bg-secondary/70", icon: Award, tint: "text-orange-700", label: "3rd" },
+} as const;
 
-function BadgeCard({
-  icon: Icon,
-  emoji,
-  title,
-  subtitle,
+const PodiumStep = ({
+  place,
   name,
-  tone,
+  label,
+  person,
 }: {
-  icon: typeof Trophy;
-  emoji: string;
-  title: string;
-  subtitle: string;
+  place: 1 | 2 | 3;
   name: string;
-  tone: keyof typeof BADGE_TONES;
-}) {
-  const t = BADGE_TONES[tone];
+  label: string;
+  person: PersonStats;
+}) => {
+  const c = PODIUM[place];
+  const Icon = c.icon;
   return (
-    <Card
-      className={cn(
-        "transition-all hover:shadow-md hover:-translate-y-0.5 overflow-hidden border-2 border-transparent bg-gradient-to-br",
-        t.ring,
-        t.bg
-      )}
-    >
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start gap-3">
-          <div
-            className={cn(
-              "w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0",
-              t.iconBg
-            )}
-            aria-hidden
-          >
-            <span>{emoji}</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 mb-0.5">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {title}
-              </p>
-              <Icon className={cn("w-3 h-3", t.iconText)} />
-            </div>
-            <p className="text-base sm:text-lg font-bold truncate">{name}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="flex min-w-0 flex-col items-center text-center">
+      <Icon className={cn("mb-1 size-5", c.tint)} strokeWidth={1.75} aria-hidden />
+      <PersonAvatar name={name} size={place === 1 ? "xl" : "lg"} />
+      <p className="mt-2 w-full truncate text-sm font-semibold">{label}</p>
+      <p className="text-sm tabular-nums text-muted-foreground">{formatMoney(person.totalPaid, { decimals: 0 })}</p>
+      <div className={cn("mt-3 flex w-full items-start justify-center rounded-t-xl pt-2", c.height, c.fill)}>
+        <span className="text-xs font-semibold text-foreground/70">{c.label}</span>
+      </div>
+    </div>
   );
-}
-
+};

@@ -1,37 +1,25 @@
-import React, { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
+import { CalendarDays, ChevronDown, Download, RotateCw, SlidersHorizontal, Users } from "lucide-react";
+import { toast } from "sonner";
+import autoTable from "jspdf-autotable";
+import type jsPDF from "jspdf";
+import type { DateRange as PickerRange } from "react-day-picker";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Loader2,
-  Download,
-  Filter,
-  X,
-  DollarSign,
-  CalendarIcon,
-  Bookmark,
-} from "lucide-react";
-import { format } from "date-fns";
-import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/PageHeader";
+import { InsightsTabs } from "@/components/InsightsTabs";
+import { EmptyState } from "@/components/EmptyState";
+import { PersonAvatar } from "@/components/PersonAvatar";
+import { CategoryFilterSection } from "@/components/CategoryFilterChips";
 import { useMyCostFilters } from "@/hooks/useMyCostFilters";
-import autoTable from "jspdf-autotable";
+import { useSpaceData } from "@/hooks/useSpaceData";
+import { useMe } from "@/hooks/useMe";
+import { applyExpenseFilters, EMPTY_CATEGORY_FILTERS, EMPTY_PEOPLE_FILTERS, type CategoryFilterValue } from "@/lib/expenseFilters";
+import { errorMessage } from "@/lib/db";
+import { formatMoney, formatRange, parseDateOnly, plural, toDateOnly } from "@/lib/format";
 import {
   drawPdfHeader,
   drawPdfFooter,
@@ -41,43 +29,7 @@ import {
   createPdfDoc,
   pdfAmount,
 } from "@/lib/pdfStyle";
-import { useSplitSpace } from "@/contexts/SplitSpaceContext";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
-
-interface Flatmate {
-  id: string;
-  name: string;
-  email: string | null;
-}
-
-interface Category {
-  id: string;
-  name: string;
-}
-
-interface Expense {
-  id: string;
-  title: string;
-  amount: number;
-  date: string;
-  paid_by: string;
-  category_id?: string;
-  categories?: {
-    name: string;
-  };
-  expense_splits: { flatmate_id: string }[];
-}
+import { cn } from "@/lib/utils";
 
 interface PersonCost {
   id: string;
@@ -86,307 +38,43 @@ interface PersonCost {
   expenseCount: number;
 }
 
-interface SavedSettlement {
-  id: string;
-  from_date: string;
-  to_date: string;
-  note: string | null;
-  created_at: string;
-}
+const lastTableY = (doc: jsPDF, fallback: number) =>
+  (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || fallback;
 
+/** Each person's share of the costs (what they consumed), whoever paid. */
 export default function MyCost() {
-  const {
-    selectedSplitSpace,
-    splitSpaces,
-    loading: contextLoading,
-  } = useSplitSpace();
-  const [loading, setLoading] = useState(true);
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
-  const [personCosts, setPersonCosts] = useState<PersonCost[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryFilters, setCategoryFilters] = useState<{
-    include: string[];
-    exclude: string[];
-  }>({
-    include: [],
-    exclude: [],
-  });
-  const [filtersModalOpen, setFiltersModalOpen] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [savedSettlements, setSavedSettlements] = useState<SavedSettlement[]>(
-    []
-  );
-  const {
-    datePreset,
-    dateRange,
-    setDatePreset,
-    setDateRange,
-    applySettlementRange,
-    resetDateFilters,
-  } = useMyCostFilters();
+  const { flatmates, expenses: allExpenses, categories, settlements, space, isLoading, error, refetch } = useSpaceData();
+  const { meId } = useMe(flatmates);
+  const { datePreset, dateRange, setDatePreset, setDateRange, applySettlementRange, resetDateFilters } =
+    useMyCostFilters();
+  const [categoryFilters, setCategoryFilters] = useState<CategoryFilterValue>(EMPTY_CATEGORY_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [periodOpen, setPeriodOpen] = useState(false);
+  const [draft, setDraft] = useState<PickerRange | undefined>();
 
-  const fetchDataWithoutSplitSpace = async () => {
-    setLoading(true);
-    try {
-      const { data: flatmatesData, error: flatmatesError } = await supabase
-        .from("flatmates")
-        .select("id, name, email")
-        .order("name");
-
-      if (flatmatesError) throw flatmatesError;
-
-      const { data: expensesData, error: expensesError } = await supabase
-        .from("expenses")
-        .select(
-          `
-          *,
-          categories (name),
-          expense_splits (
-            flatmate_id
-          )
-        `
-        )
-        .order("date", { ascending: false });
-
-      if (expensesError) throw expensesError;
-
-      setFlatmates(flatmatesData || []);
-      setAllExpenses(expensesData || []);
-
-      // Fetch categories
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const { data: categoriesData } = await supabase
-          .from("categories")
-          .select("id, name")
-          .eq("created_by", user.id)
-          .order("name");
-        setCategories(categoriesData || []);
-      }
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-      toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchData = async () => {
-    if (!selectedSplitSpace) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const flatmatesQuery = supabase
-        .from("flatmates")
-        .select("id, name, email")
-        .order("name");
-
-      const { data: flatmatesData, error: flatmatesError } =
-        await flatmatesQuery.or(
-          `split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`
-        );
-
-      if (flatmatesError) {
-        if (
-          flatmatesError.message?.includes("column") ||
-          flatmatesError.code === "42703"
-        ) {
-          const { data, error } = await supabase
-            .from("flatmates")
-            .select("id, name, email")
-            .order("name");
-          if (error) throw error;
-          setFlatmates(data || []);
-        } else {
-          throw flatmatesError;
-        }
-      } else {
-        setFlatmates(flatmatesData || []);
-      }
-
-      const expensesQuery = supabase
-        .from("expenses")
-        .select(
-          `
-          *,
-          categories (name),
-          expense_splits (
-            flatmate_id
-          )
-        `
-        )
-        .order("date", { ascending: false });
-
-      const { data: expensesData, error: expensesError } =
-        await expensesQuery.or(
-          `split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`
-        );
-
-      if (expensesError) {
-        if (
-          expensesError.message?.includes("column") ||
-          expensesError.code === "42703"
-        ) {
-          const { data, error } = await supabase
-            .from("expenses")
-            .select(
-              `
-              *,
-              categories (name),
-              expense_splits (
-                flatmate_id
-              )
-            `
-            )
-            .order("date", { ascending: false });
-          if (error) throw error;
-          setAllExpenses(data || []);
-        } else {
-          throw expensesError;
-        }
-      } else {
-        setAllExpenses(expensesData || []);
-      }
-
-      // Fetch categories
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const { data: categoriesData } = await supabase
-          .from("categories")
-          .select("id, name")
-          .eq("created_by", user.id)
-          .order("name");
-        setCategories(categoriesData || []);
-      }
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-      toast.error(`Failed to fetch data: ${error.message || "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // A stored "past settlement" preset whose settlement was deleted falls back to all time.
   useEffect(() => {
-    if (contextLoading) {
-      return;
-    }
+    if (!datePreset.startsWith("settlement:") || isLoading) return;
+    const id = datePreset.replace("settlement:", "");
+    if (!settlements.some((s) => s.id === id)) setDatePreset("all-time");
+  }, [settlements, datePreset, setDatePreset, isLoading]);
 
-    if (splitSpaces.length === 0) {
-      fetchDataWithoutSplitSpace();
-    } else if (selectedSplitSpace) {
-      fetchData();
-    } else {
-      setLoading(false);
-    }
-  }, [selectedSplitSpace, splitSpaces.length, contextLoading]);
-
-  useEffect(() => {
-    if (!selectedSplitSpace) {
-      setSavedSettlements([]);
-      return;
-    }
-    const loadSavedSettlements = async () => {
-      const { data, error } = await supabase
-        .from("settlements")
-        .select("id, from_date, to_date, note, created_at")
-        .eq("split_space_id", selectedSplitSpace.id)
-        .order("created_at", { ascending: false });
-      if (error) {
-        if (error.code === "42P01") return;
-        console.error("Failed to load saved settlements:", error);
-        return;
-      }
-      setSavedSettlements(data || []);
-    };
-    loadSavedSettlements();
-  }, [selectedSplitSpace]);
-
-  useEffect(() => {
-    if (!datePreset.startsWith("settlement:")) return;
-    const settlementId = datePreset.replace("settlement:", "");
-    if (!savedSettlements.some((s) => s.id === settlementId)) {
-      setDatePreset("all-time");
-    }
-  }, [savedSettlements, datePreset, setDatePreset]);
-
-  // Apply date and category filters to expenses
-  useEffect(() => {
-    let filteredExpenses = [...allExpenses];
-
+  const expenses = useMemo(() => {
+    let list = allExpenses;
     if (datePreset !== "all-time") {
-      const fromStr = format(dateRange.from, "yyyy-MM-dd");
-      const toStr = format(dateRange.to, "yyyy-MM-dd");
-      filteredExpenses = filteredExpenses.filter(
-        (expense) => expense.date >= fromStr && expense.date <= toStr
-      );
+      const fromStr = toDateOnly(dateRange.from);
+      const toStr = toDateOnly(dateRange.to);
+      list = list.filter((e) => e.date >= fromStr && e.date <= toStr);
     }
+    return applyExpenseFilters(list, EMPTY_PEOPLE_FILTERS, categoryFilters);
+  }, [allExpenses, datePreset, dateRange, categoryFilters]);
 
-    // Apply category filters
-    if (categoryFilters.include.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          expense.category_id &&
-          categoryFilters.include.includes(expense.category_id)
-        );
-      });
-    }
-
-    if (categoryFilters.exclude.length > 0) {
-      filteredExpenses = filteredExpenses.filter((expense) => {
-        return (
-          !expense.category_id ||
-          !categoryFilters.exclude.includes(expense.category_id)
-        );
-      });
-    }
-
-    setExpenses(filteredExpenses);
-  }, [allExpenses, categoryFilters, datePreset, dateRange]);
-
-  // Calculate costs per person
-  useEffect(() => {
-    if (flatmates.length > 0 && expenses.length > 0) {
-      calculateCosts();
-    } else if (flatmates.length > 0) {
-      // No expenses, set all costs to 0
-      setPersonCosts(
-        flatmates.map((f) => ({
-          id: f.id,
-          name: f.name,
-          totalCost: 0,
-          expenseCount: 0,
-        }))
-      );
-    }
-  }, [flatmates, expenses]);
-
-  const calculateCosts = () => {
+  // Unchanged rule: each split member's cost is amount ÷ people in the split.
+  const personCosts = useMemo<PersonCost[]>(() => {
     const costMap = new Map<string, PersonCost>();
-
-    // Initialize costs
-    flatmates.forEach((flatmate) => {
-      costMap.set(flatmate.id, {
-        id: flatmate.id,
-        name: flatmate.name,
-        totalCost: 0,
-        expenseCount: 0,
-      });
-    });
-
-    // Calculate total cost per person
+    flatmates.forEach((f) => costMap.set(f.id, { id: f.id, name: f.name, totalCost: 0, expenseCount: 0 }));
     expenses.forEach((expense) => {
-      // Calculate split amount per person
       const splitAmount = expense.amount / expense.expense_splits.length;
-
       expense.expense_splits.forEach((split) => {
         const personCost = costMap.get(split.flatmate_id);
         if (personCost) {
@@ -395,75 +83,35 @@ export default function MyCost() {
         }
       });
     });
+    return Array.from(costMap.values()).sort((a, b) => b.totalCost - a.totalCost);
+  }, [flatmates, expenses]);
 
-    const calculatedCosts = Array.from(costMap.values());
-    // Sort by total cost descending
-    calculatedCosts.sort((a, b) => b.totalCost - a.totalCost);
-    setPersonCosts(calculatedCosts);
-  };
+  const totalCost = personCosts.reduce((sum, p) => sum + p.totalCost, 0);
+  const average = personCosts.length > 0 ? totalCost / personCosts.length : 0;
+  const maxCost = Math.max(...personCosts.map((p) => p.totalCost), 1);
+  const activeSettlement = datePreset.startsWith("settlement:")
+    ? settlements.find((s) => `settlement:${s.id}` === datePreset)
+    : undefined;
 
-  const resetFilters = () => {
-    setCategoryFilters({
-      include: [],
-      exclude: [],
-    });
-  };
+  const periodLabel = datePreset === "all-time" ? "All time" : formatRange(dateRange.from, dateRange.to);
 
-  const getPeriodLabel = () => {
-    if (datePreset === "all-time") {
-      return "All time";
-    }
-    return `${format(dateRange.from, "MMM d, yyyy")} – ${format(
-      dateRange.to,
-      "MMM d, yyyy"
-    )}`;
-  };
-
-  const handleDatePresetChange = (value: string) => {
-    if (value === "all-time" || value === "custom") {
-      setDatePreset(value);
-      return;
-    }
-    if (value.startsWith("settlement:")) {
-      const settlementId = value.replace("settlement:", "");
-      const settlement = savedSettlements.find((s) => s.id === settlementId);
-      if (settlement) {
-        applySettlementRange(
-          settlement.id,
-          new Date(settlement.from_date),
-          new Date(settlement.to_date)
-        );
-      }
-    }
-  };
-
-  const generatePDF = async () => {
-    setPdfLoading(true);
+  const generatePDF = () => {
     try {
       const doc = createPdfDoc();
-      const totalCost = personCosts.reduce((sum, p) => sum + p.totalCost, 0);
-
       let y = drawPdfHeader(doc, {
         title: "Cost Report",
-        subtitle: selectedSplitSpace ? selectedSplitSpace.name : undefined,
-        meta: `${getPeriodLabel()} · ${format(new Date(), "MMM d, yyyy")}`,
+        subtitle: space ? space.name : undefined,
+        meta: `${datePreset === "all-time" ? "All time" : `${format(dateRange.from, "MMM d, yyyy")} – ${format(dateRange.to, "MMM d, yyyy")}`} · ${format(new Date(), "MMM d, yyyy")}`,
       });
       y = drawBody(doc, `Total cost: ${pdfAmount(totalCost)}`, y, { muted: true });
       y += 4;
-
       y = drawSectionTitle(doc, "Cost per Person", y);
-
-      const costData = personCosts.map((personCost) => [
-        personCost.name,
-        pdfAmount(personCost.totalCost),
-        `${personCost.expenseCount}`,
-      ]);
 
       autoTable(doc, {
         ...tableStyles({
           startY: y + 2,
           head: [["Name", "Total Cost", "Expenses"]],
-          body: costData,
+          body: personCosts.map((p) => [p.name, pdfAmount(p.totalCost), `${p.expenseCount}`]),
           columnStyles: {
             1: { halign: "right", fontStyle: "bold" },
             2: { halign: "center", cellWidth: 30 },
@@ -474,9 +122,8 @@ export default function MyCost() {
         }),
       });
 
-      const finalY = (doc as any).lastAutoTable?.finalY || y;
+      const finalY = lastTableY(doc, y);
       const pageHeight = doc.internal.pageSize.height;
-
       let summaryStartY = finalY + 12;
       if (summaryStartY > pageHeight - 50) {
         doc.addPage();
@@ -488,434 +135,234 @@ export default function MyCost() {
       cy = drawBody(doc, `Total cost: ${pdfAmount(totalCost)}`, cy);
       cy = drawBody(
         doc,
-        `Average per person: ${
-          personCosts.length > 0 ? pdfAmount(totalCost / personCosts.length) : "Rs. 0.00"
-        }`,
+        `Average per person: ${personCosts.length > 0 ? pdfAmount(totalCost / personCosts.length) : "Rs. 0.00"}`,
         cy
       );
-      cy = drawBody(doc, `Total expenses: ${expenses.length}`, cy);
+      drawBody(doc, `Total expenses: ${expenses.length}`, cy);
 
       drawPdfFooter(doc);
-
-      doc.save(
-        `cost_report_${selectedSplitSpace?.name || "all"}_${format(
-          new Date(),
-          "yyyy-MM-dd"
-        )}.pdf`
-      );
-      toast.success("PDF downloaded successfully!");
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      toast.error("Failed to generate PDF");
-    } finally {
-      setPdfLoading(false);
+      doc.save(`cost_report_${space?.name || "all"}_${format(new Date(), "yyyy-MM-dd")}.pdf`);
+      toast.success("PDF downloaded");
+    } catch (err) {
+      console.error("Error generating PDF:", err);
+      toast.error("Couldn't create the PDF");
     }
   };
 
-  if (!selectedSplitSpace && splitSpaces.length > 0) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  const totalCost = personCosts.reduce((sum, p) => sum + p.totalCost, 0);
+  const filterCount = categoryFilters.include.length + categoryFilters.exclude.length;
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">My Cost</h1>
-          {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
-              <span className="hidden sm:inline">SplitSpace: </span>
-              {selectedSplitSpace.name}
-            </p>
-          )}
+    <div className="space-y-5">
+      <PageHeader
+        title="Insights"
+        documentTitle="Cost per person"
+        description="Each person's share of the costs, whoever paid at the till."
+        actions={
+          !isLoading &&
+          personCosts.length > 0 && (
+            <Button variant="outline" onClick={generatePDF}>
+              <Download />
+              Download PDF
+            </Button>
+          )
+        }
+      />
+      <InsightsTabs />
+
+      {isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-72" />
+          <Skeleton className="h-72 rounded-2xl" />
         </div>
-        <div className="flex items-center gap-2">
-          {categories.length > 0 && (
-            <Dialog
-              open={filtersModalOpen}
-              onOpenChange={setFiltersModalOpen}
+      ) : error ? (
+        <EmptyState
+          icon={RotateCw}
+          title="Couldn't load costs"
+          action={<Button onClick={refetch}>Try again</Button>}
+          className="rounded-2xl border bg-card"
+        >
+          {errorMessage(error)}
+        </EmptyState>
+      ) : flatmates.length === 0 ? (
+        <EmptyState icon={Users} title="No people in this space yet" className="rounded-2xl border bg-card">
+          Costs per person appear once people share expenses.
+        </EmptyState>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Popover
+              open={periodOpen}
+              onOpenChange={(open) => {
+                setPeriodOpen(open);
+                if (!open) setDraft(undefined);
+              }}
             >
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <Filter className="w-4 h-4" />
-                  Filters
-                  {(categoryFilters.include.length > 0 ||
-                    categoryFilters.exclude.length > 0) && (
-                    <Badge
-                      variant="secondary"
-                      className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
-                    >
-                      {categoryFilters.include.length +
-                        categoryFilters.exclude.length}
-                    </Badge>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="h-10 max-w-full gap-2 px-3 font-normal">
+                  <CalendarDays className="text-muted-foreground" />
+                  <span className="truncate font-medium">{periodLabel}</span>
+                  {activeSettlement?.note && (
+                    <span className="hidden truncate text-muted-foreground sm:inline">· {activeSettlement.note}</span>
                   )}
+                  <ChevronDown className="ml-1 text-muted-foreground" />
                 </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Filter className="w-5 h-5" />
-                    Category Filters
-                  </DialogTitle>
-                  <DialogDescription>
-                    Filter expenses by categories to calculate costs
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="mt-4 space-y-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Include Categories</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <Label className="text-sm font-medium">
-                        Show only expenses in these categories
-                      </Label>
-                      <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                        {categories.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No categories available
-                          </p>
-                        ) : (
-                          categories.map((category) => (
-                            <div
-                              key={category.id}
-                              className="flex items-center space-x-2"
-                            >
-                              <Checkbox
-                                id={`include-${category.id}`}
-                                checked={categoryFilters.include.includes(
-                                  category.id
-                                )}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      include: [
-                                        ...categoryFilters.include,
-                                        category.id,
-                                      ],
-                                    });
-                                  } else {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      include: categoryFilters.include.filter(
-                                        (id) => id !== category.id
-                                      ),
-                                    });
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`include-${category.id}`}
-                                className="text-sm font-normal cursor-pointer flex-1"
-                              >
-                                {category.name}
-                              </Label>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Separator />
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Exclude Categories</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <Label className="text-sm font-medium">
-                        Hide expenses in these categories
-                      </Label>
-                      <div className="space-y-2 max-h-48 overflow-y-auto p-3 bg-secondary/30 rounded-lg border border-border/50">
-                        {categories.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No categories available
-                          </p>
-                        ) : (
-                          categories.map((category) => (
-                            <div
-                              key={category.id}
-                              className="flex items-center space-x-2"
-                            >
-                              <Checkbox
-                                id={`exclude-${category.id}`}
-                                checked={categoryFilters.exclude.includes(
-                                  category.id
-                                )}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      exclude: [
-                                        ...categoryFilters.exclude,
-                                        category.id,
-                                      ],
-                                    });
-                                  } else {
-                                    setCategoryFilters({
-                                      ...categoryFilters,
-                                      exclude: categoryFilters.exclude.filter(
-                                        (id) => id !== category.id
-                                      ),
-                                    });
-                                  }
-                                }}
-                              />
-                              <Label
-                                htmlFor={`exclude-${category.id}`}
-                                className="text-sm font-normal cursor-pointer flex-1"
-                              >
-                                {category.name}
-                              </Label>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
-                  <Button
-                    variant="outline"
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                className="flex max-h-[var(--radix-popover-content-available-height)] w-auto max-w-[calc(100vw-2rem)] flex-col overflow-y-auto p-0 sm:flex-row"
+              >
+                <div className="min-w-48 border-b p-2 sm:border-b-0 sm:border-r">
+                  <PresetRow
+                    label="All time"
+                    active={datePreset === "all-time"}
                     onClick={() => {
-                      resetFilters();
+                      resetDateFilters();
+                      setPeriodOpen(false);
                     }}
-                  >
-                    <X className="w-4 h-4 mr-2" />
-                    Reset Filters
-                  </Button>
-                  <Button onClick={() => setFiltersModalOpen(false)}>
-                    Apply Filters
-                  </Button>
+                  />
+                  {settlements.length > 0 && (
+                    <p className="px-2.5 pb-1 pt-3 text-xs font-medium text-muted-foreground">Settled periods</p>
+                  )}
+                  {[...settlements]
+                    .sort((a, b) => (a.to_date < b.to_date ? 1 : -1))
+                    .map((s) => (
+                      <PresetRow
+                        key={s.id}
+                        label={formatRange(parseDateOnly(s.from_date), parseDateOnly(s.to_date))}
+                        hint={s.note}
+                        active={datePreset === `settlement:${s.id}`}
+                        onClick={() => {
+                          applySettlementRange(s.id, parseDateOnly(s.from_date), parseDateOnly(s.to_date));
+                          setPeriodOpen(false);
+                        }}
+                      />
+                    ))}
                 </div>
-              </DialogContent>
-            </Dialog>
-          )}
-          <Button
-            onClick={generatePDF}
-            disabled={pdfLoading || personCosts.length === 0}
-            className="gap-2"
-          >
-            {pdfLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Download className="w-4 h-4" />
-                Download PDF
-              </>
+                <div className="p-1">
+                  <p className="px-3 pt-2 text-xs font-medium text-muted-foreground">
+                    {draft?.from && !draft.to ? "Now pick the end date" : "Or pick a start and end date"}
+                  </p>
+                  <Calendar
+                    mode="range"
+                    selected={draft ?? (datePreset === "all-time" ? undefined : { from: dateRange.from, to: dateRange.to })}
+                    defaultMonth={draft?.from ?? dateRange.to}
+                    onSelect={(next, day) => {
+                      if (!draft || (draft.from && draft.to)) {
+                        setDraft({ from: day, to: undefined });
+                        return;
+                      }
+                      if (next?.from && next.to) {
+                        setDateRange({ from: next.from, to: next.to });
+                        setDraft(undefined);
+                        setPeriodOpen(false);
+                      } else {
+                        setDraft({ from: day, to: undefined });
+                      }
+                    }}
+                  />
+                </div>
+              </PopoverContent>
+            </Popover>
+            <Button
+              variant={filtersOpen ? "secondary" : "outline"}
+              className="h-10 gap-2 px-3"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <SlidersHorizontal className="text-muted-foreground" />
+              Categories
+              {filterCount > 0 && (
+                <span className="grid min-w-5 place-items-center rounded-full bg-primary px-1 text-[11px] font-semibold text-primary-foreground">
+                  {filterCount}
+                </span>
+              )}
+            </Button>
+            {filterCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setCategoryFilters(EMPTY_CATEGORY_FILTERS)}
+                className="px-1.5 text-[13px] font-medium text-muted-foreground hover:text-foreground"
+              >
+                Clear categories
+              </button>
             )}
-          </Button>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Select Date Range</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Period</Label>
-            <Select value={datePreset} onValueChange={handleDatePresetChange}>
-              <SelectTrigger className="w-full sm:w-[320px]">
-                <SelectValue placeholder="Select period" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all-time">All time</SelectItem>
-                <SelectItem value="custom">Custom range</SelectItem>
-                {savedSettlements.length > 0 && (
-                  <>
-                    <SelectSeparator />
-                    <SelectGroup>
-                      <SelectLabel className="flex items-center gap-1.5">
-                        <Bookmark className="w-3.5 h-3.5" />
-                        Past settlements
-                      </SelectLabel>
-                      {savedSettlements.map((settlement) => (
-                        <SelectItem
-                          key={settlement.id}
-                          value={`settlement:${settlement.id}`}
-                        >
-                          {format(new Date(settlement.from_date), "MMM d")} –{" "}
-                          {format(new Date(settlement.to_date), "MMM d, yyyy")}
-                          {settlement.note ? ` · ${settlement.note}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
           </div>
 
-          {datePreset === "all-time" ? (
-            <p className="text-sm text-muted-foreground">
-              Showing costs across all expenses in this split space.
-            </p>
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full sm:w-[240px] justify-start text-left font-normal",
-                      !dateRange.from && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                    <span className="truncate">
-                      {format(dateRange.from, "PPP")}
-                    </span>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dateRange.from}
-                    onSelect={(date) =>
-                      date && setDateRange({ ...dateRange, from: date })
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-
-              <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
-                to
-              </span>
-              <span className="text-muted-foreground text-center sm:hidden">
-                ↓
-              </span>
-
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full sm:w-[240px] justify-start text-left font-normal",
-                      !dateRange.to && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                    <span className="truncate">
-                      {format(dateRange.to, "PPP")}
-                    </span>
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dateRange.to}
-                    onSelect={(date) =>
-                      date && setDateRange({ ...dateRange, to: date })
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={resetDateFilters}
-              >
-                Reset to all time
-              </Button>
+          {filtersOpen && (
+            <div className="rounded-2xl border bg-card p-4 sm:p-5">
+              <CategoryFilterSection
+                categories={categories}
+                categoryFilters={categoryFilters}
+                setCategoryFilters={setCategoryFilters}
+              />
             </div>
           )}
-        </CardContent>
-      </Card>
 
-      {/* Cost Summary Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <DollarSign className="w-5 h-5" />
-            Cost Per Person
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">{getPeriodLabel()}</p>
-        </CardHeader>
-        <CardContent>
-          {personCosts.length === 0 ? (
-            <div className="text-center py-12">
-              <DollarSign className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">
-                No expenses found. Add expenses to see costs.
-              </p>
+          <section className="rounded-2xl border bg-card px-5 pb-2 pt-4 sm:px-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="font-semibold">Cost per person</h2>
+              <span className="text-sm text-muted-foreground">
+                {formatMoney(totalCost)} total · {formatMoney(average)} average
+              </span>
             </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-                <table className="w-full border-collapse min-w-[600px] sm:min-w-0">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left p-2 text-xs sm:text-sm">Name</th>
-                      <th className="text-right p-2 text-xs sm:text-sm">
-                        Total Cost
-                      </th>
-                      <th className="text-center p-2 text-xs sm:text-sm">
-                        Expenses
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {personCosts.map((personCost) => (
-                      <tr key={personCost.id} className="border-b">
-                        <td className="p-2 font-medium text-sm sm:text-base">
-                          {personCost.name}
-                        </td>
-                        <td className="p-2 text-right font-semibold text-sm sm:text-base text-primary">
-                          ₹{personCost.totalCost.toFixed(2)}
-                        </td>
-                        <td className="p-2 text-center text-sm sm:text-base">
-                          {personCost.expenseCount}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-4 p-4 bg-secondary/30 rounded-lg border border-border/50">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <p className="font-bold text-lg">
-                    Total Cost: ₹{totalCost.toFixed(2)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Average per person: ₹
-                    {personCosts.length > 0
-                      ? (totalCost / personCosts.length).toFixed(2)
-                      : "0.00"}
-                  </p>
-                </div>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            {expenses.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">No expenses in this period.</p>
+            ) : (
+              <ul className="mt-1 divide-y">
+                {personCosts.map((p) => {
+                  const isMe = p.id === meId;
+                  return (
+                    <li key={p.id} className="flex items-center gap-3 py-3">
+                      <PersonAvatar name={p.name} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className={cn("truncate text-sm", isMe ? "font-semibold" : "font-medium")}>
+                            {isMe ? `You (${p.name})` : p.name}
+                          </span>
+                          <span className="shrink-0 text-sm font-semibold tabular-nums">{formatMoney(p.totalCost)}</span>
+                        </div>
+                        <div className="mt-1.5 h-1.5 rounded-full bg-secondary">
+                          <div
+                            className={cn("h-1.5 rounded-full", isMe ? "bg-primary" : "bg-foreground/30")}
+                            style={{ width: `${Math.max((p.totalCost / maxCost) * 100, p.totalCost > 0 ? 1.5 : 0)}%` }}
+                          />
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Share of {plural(p.expenseCount, "expense")}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }
 
+const PresetRow = ({
+  label,
+  hint,
+  active,
+  onClick,
+}: {
+  label: string;
+  hint?: string | null;
+  active: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={cn(
+      "flex w-full flex-col rounded-md px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-secondary",
+      active && "bg-primary/10 text-primary hover:bg-primary/10"
+    )}
+  >
+    <span className="font-medium">{label}</span>
+    {hint && <span className="truncate text-xs text-muted-foreground">{hint}</span>}
+  </button>
+);

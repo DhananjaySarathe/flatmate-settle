@@ -2,14 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* Design tokens. All colors are HSL channel triplets consumed via hsl(var(--token)).
+   Warm & friendly: cream ground, terracotta primary, sage secondary accent. */
 
 @layer base {
   :root {
-    /* Warm & Friendly — cream background, terracotta primary, sage accent.
-       Inspired by Notion / Things / Bear. */
     --background: 35 35% 96%;
     --foreground: 24 10% 10%;
 
@@ -21,49 +18,39 @@ All colors MUST be HSL.
 
     --primary: 18 75% 40%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 18 75% 55%;
 
     --secondary: 35 25% 92%;
     --secondary-foreground: 24 10% 10%;
 
     --muted: 35 20% 92%;
-    --muted-foreground: 25 5% 45%;
+    --muted-foreground: 25 6% 40%;
 
-    --accent: 84 50% 35%;
-    --accent-foreground: 0 0% 100%;
+    /* shadcn's hover/highlight surface (menus, ghost buttons, calendar). Kept quiet on purpose. */
+    --accent: 35 28% 91%;
+    --accent-foreground: 24 10% 10%;
 
-    --destructive: 0 70% 45%;
+    /* Brand sage, used sparingly. */
+    --sage: 84 50% 35%;
+    --sage-foreground: 0 0% 100%;
+
+    /* Money direction. Text-safe on white and cream (≥ 5.5:1). */
+    --positive: 84 55% 27%;
+    --negative: 356 60% 42%;
+
+    --destructive: 356 60% 42%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 84 50% 35%;
+    --success: 84 55% 27%;
     --success-foreground: 0 0% 100%;
 
     --border: 35 15% 85%;
-    --input: 35 15% 85%;
+    --input: 35 15% 82%;
     --ring: 18 75% 40%;
 
+    /* Side navigation surface: one step warmer than the page. */
+    --sidebar: 35 30% 93%;
+
     --radius: 0.75rem;
-
-    --gradient-primary: linear-gradient(135deg, hsl(18 75% 40%), hsl(35 80% 50%));
-    --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(35 35% 96%));
-    --gradient-shine: linear-gradient(110deg, transparent 25%, hsl(18 75% 55% / 0.18) 50%, transparent 75%);
-
-    --shadow-card: 0 2px 6px hsl(20 10% 75% / 0.35);
-    --shadow-glow: 0 4px 14px hsl(18 75% 40% / 0.18);
-  }
-}
-
-@layer utilities {
-  .glass-card {
-    @apply bg-card/50 backdrop-blur-xl border border-border/50;
-  }
-  
-  .gradient-text {
-    @apply bg-gradient-to-r from-primary to-amber-500 bg-clip-text text-transparent;
-  }
-  
-  .hover-lift {
-    @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-lg;
   }
 }
 
@@ -72,9 +59,78 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
-    @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-feature-settings: "cv11";
+    caret-color: hsl(var(--primary));
+    accent-color: hsl(var(--primary));
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.16);
+    color: hsl(var(--foreground));
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Components that draw their own ring shouldn't get a second outline. */
+  [class*="focus-visible:ring"]:focus-visible {
+    outline: none;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
   }
 }
 
+@layer utilities {
+  .text-positive {
+    color: hsl(var(--positive));
+  }
+
+  .text-negative {
+    color: hsl(var(--negative));
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

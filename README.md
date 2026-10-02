@@ -24,30 +24,41 @@ expensewaale/
 ├── src/
 │   ├── components/          # Reusable UI components
 │   │   ├── ui/              # shadcn/ui components
-│   │   ├── graphs/          # Chart components
+│   │   ├── graphs/
 │   │   │   └── ExpenseTrendGraph.tsx
-│   │   ├── Layout.tsx       # Main layout with navigation
+│   │   ├── Layout.tsx       # App shell: sidebar (desktop), top bar + tab bar (phone)
+│   │   ├── ExpenseSheet.tsx # The one add/edit expense form
+│   │   ├── LedgerViews.tsx  # PaymentList (who pays whom) and BalanceList
+│   │   ├── ReportControls.tsx # Period presets + filter panel for Balances/Insights
 │   │   ├── SplitSpaceSelector.tsx
-│   │   ├── EmailReportDialog.tsx
-│   │   ├── CategorySelector.tsx
-│   │   └── PeopleFilters.tsx
-│   ├── contexts/            # React contexts
-│   │   └── SplitSpaceContext.tsx
-│   ├── hooks/               # Custom React hooks
-│   │   └── useReportFilters.ts  # Filter persistence hook
-│   ├── integrations/        # External service integrations
-│   │   └── supabase/
-│   │       ├── client.ts
-│   │       └── types.ts
-│   ├── lib/                 # Utility functions
-│   ├── pages/               # Page components
-│   │   ├── Auth.tsx
-│   │   ├── Dashboard.tsx
+│   │   └── …                # ChoiceChip, PersonAvatar, ExpenseRow, ResponsiveDialog, …
+│   ├── contexts/
+│   │   ├── SplitSpaceContext.tsx   # Selected space
+│   │   └── ExpenseSheetContext.tsx # Open the expense sheet from anywhere
+│   ├── hooks/
+│   │   ├── useSpaceData.ts         # Cached reads for the selected space (TanStack Query)
+│   │   ├── useMe.ts                # Which person is "me" (per device)
+│   │   ├── useReportFilters.ts     # Filter persistence (Balances + Insights)
+│   │   └── useMyCostFilters.ts
+│   ├── integrations/supabase/      # Generated client + types
+│   ├── lib/
+│   │   ├── settlement.ts    # Balance + settle-up maths (unchanged rules)
+│   │   ├── ledger.ts        # Composes settlement.ts; open period since last settle-up
+│   │   ├── mutations.ts     # Every write the UI makes
+│   │   ├── format.ts        # ₹ and date formatting
+│   │   ├── reportPdf.ts, pdfStyle.ts, shareText.ts  # Exports
+│   │   └── db.ts            # Untyped handle + row types (types.ts is stale)
+│   ├── pages/
+│   │   ├── Auth.tsx         # Landing + sign in / create account
+│   │   ├── Dashboard.tsx    # Home: where you stand + settle up
 │   │   ├── Expenses.tsx
-│   │   ├── Reports.tsx
-│   │   ├── Analytics.tsx
-│   │   ├── Leaderboard.tsx
-│   │   └── SplitSpaces.tsx
+│   │   ├── People.tsx
+│   │   ├── Reports.tsx      # "Balances"
+│   │   ├── Analytics.tsx    # Insights › Spending
+│   │   ├── MyCost.tsx       # Insights › Per person
+│   │   ├── Leaderboard.tsx  # Insights › Leaderboard
+│   │   ├── SplitSpaces.tsx
+│   │   └── SharedReport.tsx # Public read-only snapshot
 │   ├── App.tsx              # Main app component
 │   └── main.tsx             # Entry point
 ├── supabase/
@@ -180,7 +191,7 @@ npm run lint
 
 - Equal splitting among selected flatmates
 - Category assignment (default or custom)
-- "Select All" button for quick flatmate selection
+- One add/edit sheet reachable from every page (sidebar button, phone tab-bar +, or the N key); split defaults to everyone, payer defaults to "me" or the last payer, with a live "who owes whom" preview
 - Automatic balance calculation
 - Settlement algorithm minimizes transactions
 
@@ -192,10 +203,11 @@ npm run lint
 - Category-wise analytics and insights
 - Default categories cannot be deleted
 
-### Reports Page
+### Balances Page (`/reports`)
 
 - **Date Range Filtering**: Select custom date ranges
-- **Advanced Filters Modal**:
+- **Period presets**: since last settle-up, this month, last month, all time, and every settled period
+- **Inline filter panel** with removable chips:
   - People filters: Exact Match, Any Match, Exclude, Paid By (multi-select)
   - Category filters: Include/Exclude categories
   - Filter persistence in localStorage
@@ -206,14 +218,14 @@ npm run lint
 - **Balance Calculations**: Real-time balance updates based on filters
 - **Settlement Instructions**: Minimum transaction calculations
 - **PDF Export**: Detailed expense reports and settlement summaries
-- **Email Sending**: Via Edge Function (comprehensive or individual reports)
+- **Email Sending**: an Edge Function exists, but the UI doesn't call it yet (the old dialog only simulated success, so it isn't exposed)
 - **Copy to Clipboard**: Quick sharing of summaries
 
 ### Analytics Page
 
-- **Key Metrics**: Total Expenses, Avg per Day, Avg per Person, Fairness Score
+- **Key Metrics**: Spent, Per day, Per person, Biggest category (the fairness score is still in the PDF export, but no longer on screen: with rupee amounts it read 0 "Skewed" for almost any real data)
 - **Category Breakdown**: Visual progress bars with percentages
-- **Expense Trends Graph**: Interactive area chart (Day/Week/Month views)
+- **Spending over time**: column chart (Day/Week/Month), empty periods shown as zero, with a table view
 - **Top 5 Most Expensive Days**: Identifies spending spikes
 - **Advanced Filtering**: Same filters as Reports page
 - **PDF Export**: Comprehensive analytics summary
@@ -221,7 +233,7 @@ npm run lint
 
 ### Leaderboard Page
 
-- **Top 3 Payers**: Medal rankings (🥇🥈🥉)
+- **Top 3 Payers**: podium
 - **Fun Stats**:
   - Most Generous (highest total paid)
   - Silent Assassin (lowest paid but active)
@@ -297,26 +309,29 @@ Email sending is handled via Supabase Edge Functions:
 
 ### React Query
 
-Used for server state management and caching (configured but minimal usage currently).
+`useSpaceData` caches flatmates, expenses, settlements and categories per space, so moving between pages is instant. Writes invalidate through `useRefreshSpaceData`.
 
 ## Component Architecture
 
 ### Reusable Components
 
-- **CategorySelector**: Category selection with custom category creation
-- **PeopleFilters**: Advanced people-based filtering UI
-- **ExpenseTrendGraph**: Reusable chart component for expense trends
-- **SplitSpaceSelector**: Split space dropdown selector
-- **EmailReportDialog**: Email sending interface
+- **ExpenseSheet**: add/edit expense (bottom sheet on phones, dialog on desktop)
+- **PaymentList / BalanceList**: who pays whom, and everyone's position in words
+- **ReportControls**: period presets, filter panel, active-filter chips
+- **PeopleFilters / CategoryFilterSection**: controlled filter chip groups
+- **ResponsiveDialog**, **ChoiceChip**, **PersonAvatar**, **ExpenseRow**, **EmptyState**, **PageHeader**
+- **ExpenseTrendGraph**: spending chart with a table view
+- **SplitSpaceSelector**: space switcher
 
 ### Page Components
 
-- **Dashboard**: Flatmate management
-- **Expenses**: Expense CRUD with categories
-- **Reports**: Filtering, balances, settlements, PDF/email export
-- **Analytics**: Insights, trends, category breakdown
-- **Leaderboard**: Fun stats and badges
-- **SplitSpaces**: Split space management
+- **Dashboard** (Home): your position, settle-up plan, recent expenses; first-run setup
+- **Expenses**: list grouped by month with search, person and category filters
+- **People**: add/edit/remove people, "this is me"
+- **Reports** (Balances): period + filters, settle up, balances, exports, settled periods
+- **Analytics / MyCost / Leaderboard**: the three Insights tabs
+- **SplitSpaces**: space management
+- **SharedReport**: public snapshot with "find your share"
 
 ## Styling
 
@@ -324,14 +339,14 @@ Used for server state management and caching (configured but minimal usage curre
 - **shadcn/ui**: Pre-built accessible components
 - **Custom Theme**: Configured in `tailwind.config.ts`
 - **Responsive Design**: Mobile-first approach
-- **Dark Mode**: Supported via CSS variables
+- **Design tokens**: `src/index.css` (`--positive` / `--negative` for money direction, `--sage` for the brand accent). There's no dark theme yet.
 
 ## Data Flow
 
-1. **Expense Creation**: User → Form → Supabase → State Update → UI Refresh
+1. **Expense Creation**: ExpenseSheet → `lib/mutations.ts` → Supabase → query invalidation → every page re-renders from the cache
 2. **Filtering**: User → Filter Selection → localStorage → Filter Logic → Filtered Data → UI Update
 3. **Analytics**: Filtered Expenses → Calculations → Charts/Metrics → Display
-4. **Reports**: Filtered Expenses → Balance Calculation → Settlement Algorithm → PDF/Email
+4. **Balances**: Filtered Expenses → `calculateBalances` → `calculateSettlements` → screen / PDF / copied text / share snapshot
 
 ## Code Quality
 

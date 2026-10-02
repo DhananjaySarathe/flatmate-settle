@@ -28,31 +28,39 @@ Path alias: `@/*` → `src/*` (configured in `vite.config.ts` and `tsconfig`).
 
 ### Routing & layout
 
-`src/App.tsx` sets up `BrowserRouter` with these routes — `/` redirects to `/auth`; `/auth` renders bare; every other page (`/dashboard`, `/expenses`, `/reports`, `/analytics`, `/leaderboard`, `/my-cost`, `/split-spaces`) is wrapped in `<Layout>`. New pages must be registered above the `*` catch-all and (almost always) wrapped in `<Layout>`. `vercel.json` rewrites all paths to `/` for SPA routing.
+`src/App.tsx` sets up `BrowserRouter` with these routes — `/` redirects to `/auth`; `/auth` and `/share/:token` render bare; every signed-in page is a child of one layout route (`<Route element={<Layout />}>`), so the shell doesn't remount on navigation. Signed-in routes: `/dashboard` (Home: your position, the settle-up plan, recent expenses), `/expenses`, `/reports` (shown as **Balances**), `/analytics`, `/my-cost` and `/leaderboard` (the three **Insights** tabs), `/people` (manage the people in a space), `/split-spaces`. Pages that pull in charts or jsPDF are `React.lazy` loaded; keep Home/Expenses/People eager. New pages must be registered above the `*` catch-all, inside the layout route. `vercel.json` rewrites all paths to `/` for SPA routing.
 
-There is **no auth guard component** — pages individually handle the unauthenticated case via the Supabase client. Don't assume a `<ProtectedRoute>` exists.
+`src/components/Layout.tsx` is the shell: a sidebar from `md` up; a top bar plus a bottom tab bar (Home, Expenses, central Add, Balances, More) on phones. It also mounts `ExpenseSheetProvider` (`src/contexts/ExpenseSheetContext.tsx`). Call `useExpenseSheet().openNewExpense()` / `openEditExpense(expense)` instead of building another expense form. "N" opens it from anywhere.
+
+There is **no auth guard component** — `Layout` redirects to `/auth` when there's no session. Don't assume a `<ProtectedRoute>` exists.
 
 ### Data layer
 
-All data access goes through one Supabase client: `import { supabase } from "@/integrations/supabase/client"`. `src/integrations/supabase/types.ts` is the **generated** Database type — regenerate it (don't hand-edit) after schema changes.
+All data access goes through one Supabase client: `import { supabase } from "@/integrations/supabase/client"`. `src/integrations/supabase/types.ts` is the **generated** Database type — regenerate it (don't hand-edit) after schema changes. It is currently stale (no `split_spaces`, `categories`, `split_space_id`, `category_id`), so new code queries through `db` from `src/lib/db.ts` (the same client, untyped) and types rows with the interfaces defined there.
+
+Reads for the selected space go through `src/hooks/useSpaceData.ts` (TanStack Query, cached per space: flatmates, expenses with `categories` + `expense_splits`, saved settlements, categories). Expenses are read in pages of 1000, because PostgREST caps responses. Writes live in `src/lib/mutations.ts`; after a write, call `useRefreshSpaceData()` to invalidate. Balance and settle-up maths stays in `src/lib/settlement.ts`. `src/lib/ledger.ts` only composes it: an id-keyed copy of the plan, and the "open period" after the latest settled `to_date`. Money and date display go through `src/lib/format.ts` (`formatMoney` for ₹ with en-IN grouping, `parseDateOnly` for DATE columns).
 
 All tables have RLS enabled. Most rows are scoped by `split_space_id`; queries that omit it will silently return nothing or violate policies. When adding a feature that touches `flatmates`, `expenses`, or `expense_splits`, always filter by the currently selected split space.
 
 ### Split Space context (cross-cutting)
 
-`src/contexts/SplitSpaceContext.tsx` (`useSplitSpace`) is the single source of truth for "which group am I in." It loads spaces for the authed user, persists the selected ID under `localStorage["selectedSplitSpaceId"]`, and falls back to a space named "Default" (auto-created by a DB trigger on signup). The `Default` space is undeletable at both DB and UI level — preserve that invariant in any new delete flows.
+`src/contexts/SplitSpaceContext.tsx` (`useSplitSpace`) is the single source of truth for "which group am I in." It loads spaces for the authed user (and reloads on `SIGNED_IN` / clears on `SIGNED_OUT`, since it sits above the router), persists the selected ID under `localStorage["selectedSplitSpaceId"]`, and falls back to a space named "Default" (auto-created by a DB trigger on signup). The `Default` space is undeletable at both DB and UI level — preserve that invariant in any new delete flows. Deleting a space cascades to its people and expenses in the DB, so the Spaces page re-counts right before deleting.
+
+Which person in a space is "me" is a per-device preference (`useMe`, `localStorage["expensewaale:me"]`, keyed by space id; `"none"` means not in the group). Flatmates aren't accounts, so this never goes to the server.
 
 ### Filter persistence (Reports + Analytics)
 
-`src/hooks/useReportFilters.ts` owns people filters (`exactMatch` / `anyMatch` / `exclude` / `paidBy`), category filters (`include` / `exclude`), and a date range, persisting the whole bag under `localStorage["reportFilters"]`. Reports and Analytics share this hook so a filter set survives navigation between them. New filterable views should reuse this hook rather than re-implementing filter persistence.
+`src/hooks/useReportFilters.ts` owns people filters (`exactMatch` / `anyMatch` / `exclude` / `paidBy`), category filters (`include` / `exclude`), and a date range, persisting the whole bag under `localStorage["reportFilters"]`. Reports and Analytics share this hook so a filter set survives navigation between them. New filterable views should reuse this hook rather than re-implementing filter persistence. The UI for it is `src/components/ReportControls.tsx` (period presets from `src/lib/periods.ts`, plus an inline filter panel and removable chips). `PeopleFilters` and `CategoryFilterSection` are controlled components: pass the hook's values in. The filter rules themselves live in `src/lib/expenseFilters.ts`.
 
-Filtering is **client-side**: pages fetch the working set from Supabase, then apply filters in memory. Keep this model — server-side filtering would break filter UX that depends on counts/options derived from the unfiltered set.
+Filtering is **client-side**: pages fetch the working set from Supabase, then apply filters in memory (including the date range, which used to be a server-side `gte`/`lte`). Keep this model — server-side filtering would break filter UX that depends on counts/options derived from the unfiltered set.
 
 ### UI
 
 shadcn/ui (Radix primitives + Tailwind), with components living in `src/components/ui/`. `components.json` configures the shadcn CLI: style "default", base color slate, alias `@/components/ui`. Add new shadcn components via the CLI rather than hand-writing them so the config stays consistent. Tailwind config: `tailwind.config.ts`. Toaster providers (`Toaster`, `Sonner`, `TooltipProvider`) are wired in `App.tsx`.
 
-State management is a deliberate mix: `SplitSpaceContext` for cross-page selection, the `useReportFilters` hook for filter persistence, TanStack Query is installed and the `QueryClientProvider` is mounted but currently barely used — most pages still call `supabase.from(...)` directly inside `useEffect`. Match the surrounding pattern when editing an existing page.
+Design tokens live in `src/index.css`. `--accent` is shadcn's quiet hover/highlight surface; the brand sage is `--sage`, and money direction is `--positive` ("gets back") and `--negative` ("owes"). Put balances into words with `NetLabel`, never as a bare sign. App-level building blocks: `ResponsiveDialog` (a bottom sheet on phones, a dialog from `md`), `ChoiceChip`, `PersonAvatar`, `ExpenseRow`, `PaymentList` / `BalanceList` (`LedgerViews.tsx`), `EmptyState`, `PageHeader`. Product context for design work is in `PRODUCT.md`.
+
+State management is a deliberate mix: `SplitSpaceContext` for cross-page selection, the `useReportFilters` hook for filter persistence, and TanStack Query (`useSpaceData`) for space data. Every page except `SplitSpaces` (space counts) and `SharedReport` (public snapshot) reads through `useSpaceData`.
 
 PDF reports use `jspdf` + `jspdf-autotable`. Charts use `recharts`. Email sending goes through the Supabase Edge Function `supabase/functions/send-settlement-email/`.
 
