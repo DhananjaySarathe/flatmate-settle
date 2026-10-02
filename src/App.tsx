@@ -15,6 +15,7 @@ import SharedReport from "./pages/SharedReport";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 import { SplitSpaceProvider } from "./contexts/SplitSpaceContext";
+import { ExpenseDialogProvider } from "./contexts/ExpenseDialogContext";
 
 const queryClient = new QueryClient();
 
@@ -22,23 +23,25 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
-      <Sonner />
+      <Sonner position="top-center" />
       <BrowserRouter>
         <SplitSpaceProvider>
-          <Routes>
-            <Route path="/" element={<Navigate to="/auth" replace />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/share/:token" element={<SharedReport />} />
-            <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
-            <Route path="/expenses" element={<Layout><Expenses /></Layout>} />
-            <Route path="/reports" element={<Layout><Reports /></Layout>} />
-            <Route path="/analytics" element={<Layout><Analytics /></Layout>} />
-            <Route path="/leaderboard" element={<Layout><Leaderboard /></Layout>} />
-            <Route path="/my-cost" element={<Layout><MyCost /></Layout>} />
-            <Route path="/split-spaces" element={<Layout><SplitSpaces /></Layout>} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <ExpenseDialogProvider>
+            <Routes>
+              <Route path="/" element={<Navigate to="/auth" replace />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/share/:token" element={<SharedReport />} />
+              <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
+              <Route path="/expenses" element={<Layout><Expenses /></Layout>} />
+              <Route path="/reports" element={<Layout><Reports /></Layout>} />
+              <Route path="/analytics" element={<Layout><Analytics /></Layout>} />
+              <Route path="/leaderboard" element={<Layout><Leaderboard /></Layout>} />
+              <Route path="/my-cost" element={<Layout><MyCost /></Layout>} />
+              <Route path="/split-spaces" element={<Layout><SplitSpaces /></Layout>} />
+              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </ExpenseDialogProvider>
         </SplitSpaceProvider>
       </BrowserRouter>
     </TooltipProvider>

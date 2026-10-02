@@ -535,10 +535,10 @@ export default function MyCost() {
   const totalCost = personCosts.reduce((sum, p) => sum + p.totalCost, 0);
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">My Cost</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">My cost</h1>
           {selectedSplitSpace && (
             <p className="text-sm sm:text-base text-muted-foreground mt-1">
               <span className="hidden sm:inline">SplitSpace: </span>

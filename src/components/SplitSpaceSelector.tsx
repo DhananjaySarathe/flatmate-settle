@@ -1,13 +1,14 @@
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
 import { Button } from "@/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Building2, Plus } from "lucide-react";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Check, ChevronsUpDown, Layers, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 export const SplitSpaceSelector = () => {
@@ -15,65 +16,45 @@ export const SplitSpaceSelector = () => {
   const navigate = useNavigate();
 
   if (loading) {
-    return (
-      <div className="flex items-center gap-2 px-3 py-2">
-        <Building2 className="w-4 h-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Loading...</span>
-      </div>
-    );
+    return <div className="h-9 w-32 animate-pulse rounded-md bg-muted" aria-label="Loading SplitSpaces" />;
   }
 
   if (splitSpaces.length === 0) {
     return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => navigate("/split-spaces")}
-        className="gap-2"
-      >
-        <Plus className="w-4 h-4" />
-        <span>Create SplitSpace</span>
+      <Button variant="outline" size="sm" onClick={() => navigate("/split-spaces")} className="gap-2">
+        <Plus className="h-4 w-4" />
+        Create SplitSpace
       </Button>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <Building2 className="w-4 h-4 text-muted-foreground" />
-      <Select
-        value={selectedSplitSpace?.id || ""}
-        onValueChange={(value) => {
-          const splitSpace = splitSpaces.find((ss) => ss.id === value);
-          if (splitSpace) {
-            setSelectedSplitSpace(splitSpace);
-          }
-        }}
-      >
-        <SelectTrigger className="w-[180px] h-8">
-          <SelectValue placeholder="Select SplitSpace">
-            {selectedSplitSpace?.name || "Select SplitSpace"}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {splitSpaces.map((splitSpace) => (
-            <SelectItem key={splitSpace.id} value={splitSpace.id}>
-              {splitSpace.name}
-            </SelectItem>
-          ))}
-          <div className="border-t border-border mt-1 pt-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              onClick={() => navigate("/split-spaces")}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Manage SplitSpaces
-            </Button>
-          </div>
-        </SelectContent>
-      </Select>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          className="h-9 max-w-full justify-between gap-2 border-border/70 bg-background/60 px-3 md:max-w-[220px]"
+          aria-label="Switch SplitSpace"
+        >
+          <Layers className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate font-medium">{selectedSplitSpace?.name || "Select SplitSpace"}</span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-60">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">SplitSpaces</DropdownMenuLabel>
+        {splitSpaces.map((space) => (
+          <DropdownMenuItem key={space.id} onSelect={() => setSelectedSplitSpace(space)}>
+            <span className="flex-1 truncate">{space.name}</span>
+            {space.id === selectedSplitSpace?.id && <Check className="ml-2 h-4 w-4 text-primary" />}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate("/split-spaces")}>
+          <Plus className="mr-2 h-4 w-4" />
+          New or manage…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 };
-

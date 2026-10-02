@@ -24,7 +24,7 @@ import {
   Trash2,
   Link as LinkIcon,
 } from "lucide-react";
-import { format } from "date-fns";
+import { addDays, endOfMonth, format, isSameDay, startOfMonth, subMonths } from "date-fns";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -50,6 +50,13 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useReportFilters } from "@/hooks/useReportFilters";
+import { useExpenseDialog } from "@/contexts/ExpenseDialogContext";
+import { PageHeader } from "@/components/common/PageHeader";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { SettleUpList } from "@/components/balances/SettleUpList";
+import { BalanceList } from "@/components/balances/BalanceList";
+import { ExpenseRow } from "@/components/expenses/ExpenseRow";
+import { formatMoney, parseDay } from "@/lib/format";
 import {
   Select,
   SelectContent,
@@ -164,6 +171,8 @@ export default function Reports() {
   const [markSettlementOpen, setMarkSettlementOpen] = useState(false);
   const [settlementNote, setSettlementNote] = useState("");
   const [savingSettlement, setSavingSettlement] = useState(false);
+  const [settlementToDelete, setSettlementToDelete] = useState<string | null>(null);
+  const { dataVersion } = useExpenseDialog();
 
   // Share feature
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -229,10 +238,6 @@ export default function Reports() {
 
     setLoading(true);
     try {
-      console.log(
-        "Reports: Fetching data for SplitSpace:",
-        selectedSplitSpace.id
-      );
       // Query that handles both migrated and unmigrated data
       const flatmatesQuery = supabase
         .from("flatmates")
@@ -345,32 +350,20 @@ export default function Reports() {
   useEffect(() => {
     // Wait for context to finish loading
     if (contextLoading) {
-      console.log("Reports: Context still loading, waiting...");
       return;
     }
 
-    console.log(
-      "Reports: Context loaded. SplitSpaces:",
-      splitSpaces.length,
-      "Selected:",
-      selectedSplitSpace?.name
-    );
 
     // If no split spaces exist (migrations not run), fetch without filter
     if (splitSpaces.length === 0) {
-      console.log("Reports: No split spaces, fetching without filter");
       fetchDataWithoutSplitSpace();
     } else if (selectedSplitSpace) {
-      console.log(
-        "Reports: Fetching with SplitSpace:",
-        selectedSplitSpace.name
-      );
       fetchData();
     } else {
-      console.log("Reports: No SplitSpace selected, setting loading to false");
       setLoading(false);
     }
-  }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange, selectedSplitSpace, splitSpaces.length, contextLoading, dataVersion]);
 
   // Apply filters to expenses
   useEffect(() => {
@@ -474,9 +467,7 @@ export default function Reports() {
   }, [allExpenses, peopleFilters, categoryFilters, paidByFilter, sortBy]);
 
   useEffect(() => {
-    if (flatmates.length > 0 && expenses.length > 0) {
-      calculateBalances();
-    }
+    calculateBalances();
   }, [flatmates, expenses]);
 
   const calculateBalances = () => {
@@ -1127,20 +1118,48 @@ export default function Reports() {
     }
   };
 
+  const activeFilterCount =
+    peopleFilters.exactMatch.length +
+    peopleFilters.anyMatch.length +
+    peopleFilters.exclude.length +
+    peopleFilters.paidBy.length +
+    categoryFilters.include.length +
+    categoryFilters.exclude.length;
+
+  const nameById = new Map(flatmates.map((f) => [f.id, f.name]));
+  const totalInRange = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const lastSettlement = savedSettlements[0];
+
+  const today = new Date();
+  const presets: { label: string; from: Date; to: Date }[] = [
+    { label: "This month", from: startOfMonth(today), to: today },
+    {
+      label: "Last month",
+      from: startOfMonth(subMonths(today, 1)),
+      to: endOfMonth(subMonths(today, 1)),
+    },
+    { label: "Last 3 months", from: startOfMonth(subMonths(today, 2)), to: today },
+  ];
+  if (lastSettlement) {
+    const after = addDays(parseDay(lastSettlement.to_date), 1);
+    if (after <= today) {
+      presets.unshift({ label: "Since last settlement", from: after, to: today });
+    }
+  }
+  const isPreset = (p: { from: Date; to: Date }) =>
+    isSameDay(p.from, dateRange.from) && isSameDay(p.to, dateRange.to);
+
   // Allow page to work even if SplitSpaces feature isn't fully set up
   if (!selectedSplitSpace && splitSpaces.length > 0) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-muted-foreground">
-            Please select a SplitSpace to continue.
-          </p>
-        </div>
+        <p className="text-muted-foreground">Pick a SplitSpace to continue.</p>
       </div>
     );
   }
 
-  if (loading) {
+  // Full-page spinner only on first load; later date changes refresh in place.
+  if (loading && flatmates.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -1148,185 +1167,40 @@ export default function Reports() {
     );
   }
 
+  const datePick = (which: "from" | "to") => (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" className="h-10 flex-1 justify-start font-normal sm:w-[170px] sm:flex-none">
+          <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+          {format(dateRange[which], "d MMM yyyy")}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          selected={dateRange[which]}
+          onSelect={(date) => date && setDateRange({ ...dateRange, [which]: date })}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
-          {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
-              <span className="hidden sm:inline">SplitSpace: </span>
-              {selectedSplitSpace.name}
-            </p>
-          )}
-        </div>
-        {selectedSplitSpace && savedSettlements.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/30 px-3 py-1.5">
-              <Bookmark className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              <div className="text-xs sm:text-sm">
-                <span className="text-muted-foreground">Last settlement: </span>
-                <span className="font-medium">
-                  {format(new Date(savedSettlements[0].from_date), "MMM d")} –{" "}
-                  {format(new Date(savedSettlements[0].to_date), "MMM d, yyyy")}
-                </span>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setAllSettlementsOpen(true)}
-            >
-              See all ({savedSettlements.length})
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* All settlements modal */}
-      <Dialog open={allSettlementsOpen} onOpenChange={setAllSettlementsOpen}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bookmark className="w-5 h-5" />
-              Past Settlements
-            </DialogTitle>
-            <DialogDescription>
-              Date ranges you've marked as settled in this split space.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            {savedSettlements.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-start justify-between gap-3 rounded-md border border-border/50 p-3 bg-secondary/20"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium">
-                    {format(new Date(s.from_date), "MMM d")} –{" "}
-                    {format(new Date(s.to_date), "MMM d, yyyy")}
-                  </div>
-                  {s.note && (
-                    <div className="text-xs text-muted-foreground mt-1 break-words">
-                      {s.note}
-                    </div>
-                  )}
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Marked {format(new Date(s.created_at), "MMM d, yyyy")}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive flex-shrink-0"
-                  onClick={() => deleteSavedSettlement(s.id)}
-                  aria-label="Delete settlement"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Date Range Selector */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle>Select Date Range</CardTitle>
-            <div className="flex items-center gap-2 flex-wrap">
-              {selectedSplitSpace && (
-                <Dialog
-                  open={markSettlementOpen}
-                  onOpenChange={(open) => {
-                    setMarkSettlementOpen(open);
-                    if (!open) setSettlementNote("");
-                  }}
-                >
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <Bookmark className="w-4 h-4" />
-                      Mark Settlement
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Mark Settlement</DialogTitle>
-                      <DialogDescription>
-                        Save this date range so you remember when the last
-                        settlement happened.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                      <div className="text-sm">
-                        <span className="text-muted-foreground">Range: </span>
-                        <span className="font-medium">
-                          {format(dateRange.from, "MMM d, yyyy")} –{" "}
-                          {format(dateRange.to, "MMM d, yyyy")}
-                        </span>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="settlement-note">
-                          Note (optional)
-                        </Label>
-                        <Textarea
-                          id="settlement-note"
-                          placeholder="e.g. Settled in cash, Bob still pending"
-                          value={settlementNote}
-                          onChange={(e) => setSettlementNote(e.target.value)}
-                          rows={3}
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        onClick={() => setMarkSettlementOpen(false)}
-                        disabled={savingSettlement}
-                      >
-                        Cancel
-                      </Button>
-                      <Button onClick={saveSettlement} disabled={savingSettlement}>
-                        {savingSettlement ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Saving
-                          </>
-                        ) : (
-                          "Save"
-                        )}
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              )}
-              {flatmates.length > 0 && (
-              <Dialog
-                open={filtersModalOpen}
-                onOpenChange={setFiltersModalOpen}
-              >
+    <div className="mx-auto max-w-5xl space-y-5 sm:space-y-6 animate-fade-in">
+      <PageHeader
+        title="Settle up"
+        description="Who pays whom for a period — then mark it settled, export or share it."
+        actions={
+          <>
+            {flatmates.length > 0 && (
+              <Dialog open={filtersModalOpen} onOpenChange={setFiltersModalOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm" className="gap-2">
                     <Filter className="w-4 h-4" />
                     Filters
-                    {(peopleFilters.exactMatch.length > 0 ||
-                      peopleFilters.anyMatch.length > 0 ||
-                      peopleFilters.exclude.length > 0 ||
-                      peopleFilters.paidBy.length > 0 ||
-                      categoryFilters.include.length > 0 ||
-                      categoryFilters.exclude.length > 0) && (
-                      <Badge
-                        variant="secondary"
-                        className="ml-1 h-5 w-5 p-0 flex items-center justify-center"
-                      >
-                        {peopleFilters.exactMatch.length +
-                          peopleFilters.anyMatch.length +
-                          peopleFilters.exclude.length +
-                          peopleFilters.paidBy.length +
-                          categoryFilters.include.length +
-                          categoryFilters.exclude.length}
-                      </Badge>
+                    {activeFilterCount > 0 && (
+                      <Badge className="ml-0.5 h-5 min-w-5 justify-center px-1.5">{activeFilterCount}</Badge>
                     )}
                   </Button>
                 </DialogTrigger>
@@ -1337,19 +1211,18 @@ export default function Reports() {
                       Filters
                     </DialogTitle>
                     <DialogDescription>
-                      Narrow down what you're looking at by people or category.
+                      Narrow down by people or category. Balances and payments below use only the matching expenses.
                     </DialogDescription>
                   </DialogHeader>
 
                   <div className="space-y-6 mt-2">
                     <PeopleFilters
+                      key={JSON.stringify(peopleFilters)}
                       flatmates={flatmates}
+                      value={peopleFilters}
                       onFiltersChange={setPeopleFilters}
                     />
-
                     <Separator />
-
-                    {/* Category filters as chip pills */}
                     <CategoryFilterSection
                       categories={categories}
                       categoryFilters={categoryFilters}
@@ -1358,214 +1231,232 @@ export default function Reports() {
                   </div>
 
                   <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-6 pt-4 border-t">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        resetFilters();
-                      }}
-                    >
+                    <Button variant="outline" onClick={() => resetFilters()}>
                       <X className="w-4 h-4 mr-2" />
                       Reset all
                     </Button>
-                    <Button onClick={() => setFiltersModalOpen(false)}>
-                      Apply
-                    </Button>
+                    <Button onClick={() => setFiltersModalOpen(false)}>Done</Button>
                   </div>
                 </DialogContent>
               </Dialog>
-              )}
+            )}
+            {selectedSplitSpace && (
+              <Dialog
+                open={markSettlementOpen}
+                onOpenChange={(open) => {
+                  setMarkSettlementOpen(open);
+                  if (!open) setSettlementNote("");
+                }}
+              >
+                <DialogTrigger asChild>
+                  <Button size="sm" className="gap-2">
+                    <Bookmark className="w-4 h-4" />
+                    Mark as settled
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Mark this period as settled</DialogTitle>
+                    <DialogDescription>
+                      Saves the date range as paid up. The Overview then only counts expenses after it. Nothing is
+                      deleted.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    <div className="rounded-lg bg-secondary/60 p-3 text-sm">
+                      <span className="text-muted-foreground">Period: </span>
+                      <span className="font-medium">
+                        {format(dateRange.from, "d MMM yyyy")} – {format(dateRange.to, "d MMM yyyy")}
+                      </span>
+                      {settlements.length > 0 && (
+                        <p className="mt-1 text-muted-foreground">
+                          {settlements.length} payment{settlements.length === 1 ? "" : "s"} totalling{" "}
+                          {formatMoney(settlements.reduce((s, x) => s + x.amount, 0))}
+                        </p>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="settlement-note">Note (optional)</Label>
+                      <Textarea
+                        id="settlement-note"
+                        placeholder="e.g. Settled in cash, Bob still pending"
+                        value={settlementNote}
+                        onChange={(e) => setSettlementNote(e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setMarkSettlementOpen(false)} disabled={savingSettlement}>
+                      Cancel
+                    </Button>
+                    <Button onClick={saveSettlement} disabled={savingSettlement}>
+                      {savingSettlement ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving
+                        </>
+                      ) : (
+                        "Mark as settled"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+          </>
+        }
+      />
+
+      {/* Period */}
+      <Card>
+        <CardContent className="space-y-3 p-4 sm:p-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              {datePick("from")}
+              <span className="text-sm text-muted-foreground">to</span>
+              {datePick("to")}
+              {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            </div>
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:pb-0">
+              {presets.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => setDateRange({ from: p.from, to: p.to })}
+                  className={cn(
+                    "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                    isPreset(p)
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "w-full sm:w-[240px] justify-start text-left font-normal",
-                    !dateRange.from && "text-muted-foreground"
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">
-                    {dateRange.from ? (
-                      format(dateRange.from, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick start date</span>
-                    )}
-                    {dateRange.from && (
-                      <span className="sm:hidden">
-                        {format(dateRange.from, "MMM dd")}
-                      </span>
-                    )}
-                  </span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.from}
-                  onSelect={(date) =>
-                    date && setDateRange({ ...dateRange, from: date })
-                  }
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-
-            <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
-              to
-            </span>
-            <span className="text-muted-foreground text-center sm:hidden">
-              ↓
-            </span>
-
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "w-full sm:w-[240px] justify-start text-left font-normal",
-                    !dateRange.to && "text-muted-foreground"
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">
-                    {dateRange.to ? (
-                      format(dateRange.to, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick end date</span>
-                    )}
-                    {dateRange.to && (
-                      <span className="sm:hidden">
-                        {format(dateRange.to, "MMM dd")}
-                      </span>
-                    )}
-                  </span>
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={dateRange.to}
-                  onSelect={(date) =>
-                    date && setDateRange({ ...dateRange, to: date })
-                  }
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-
-          {/* Copy Buttons */}
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4">
-            <Button
-              variant="outline"
-              onClick={copySettlementSummary}
-              disabled={settlements.length === 0}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto"
-            >
-              {copiedSettlement ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span className="sm:hidden">Copied!</span>
-                  <span className="hidden sm:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  <span className="sm:hidden">Copy Summary</span>
-                  <span className="hidden sm:inline">
-                    Copy Settlement Summary
-                  </span>
-                </>
+          {(lastSettlement || activeFilterCount > 0) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
+              {lastSettlement && (
+                <span className="flex items-center gap-1.5">
+                  <Bookmark className="h-3.5 w-3.5" />
+                  Last settled: {format(parseDay(lastSettlement.from_date), "d MMM")} –{" "}
+                  {format(parseDay(lastSettlement.to_date), "d MMM yyyy")}
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    onClick={() => setAllSettlementsOpen(true)}
+                  >
+                    History ({savedSettlements.length})
+                  </button>
+                </span>
               )}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={copyAllExpenses}
-              disabled={expenses.length === 0}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto"
-            >
-              {copiedExpenses ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span className="sm:hidden">Copied!</span>
-                  <span className="hidden sm:inline">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  <span className="sm:hidden">Copy Expenses</span>
-                  <span className="hidden sm:inline">
-                    Copy All Expense Splitting
-                  </span>
-                </>
+              {activeFilterCount > 0 && (
+                <span className="flex items-center gap-1.5 text-amber-700">
+                  <Filter className="h-3.5 w-3.5" />
+                  {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"} applied — totals cover matching
+                  expenses only.
+                  <button type="button" className="font-medium text-primary hover:underline" onClick={resetFilters}>
+                    Clear
+                  </button>
+                </span>
               )}
-            </Button>
-          </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Filtered Transactions List */}
-      {expenses.length > 0 && (
+      {expenses.length === 0 ? (
         <Card>
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="w-5 h-5" />
-                Filtered Transactions ({expenses.length})
-              </CardTitle>
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge variant="secondary">
-                  {format(dateRange.from, "MMM dd")} -{" "}
-                  {format(dateRange.to, "MMM dd")}
-                </Badge>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-medium whitespace-nowrap">
-                    Sort By:
-                  </Label>
-                  <Select
-                    value={sortBy}
-                    onValueChange={(value: typeof sortBy) => setSortBy(value)}
+          <CardContent className="py-12 text-center">
+            <Receipt className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+            <p className="font-medium">No expenses in this period</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {activeFilterCount > 0 ? "Try clearing filters or " : "Try "}a different date range.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className={cn("grid gap-5 sm:gap-6 lg:grid-cols-5", loading && "opacity-60 transition-opacity")}>
+            <Card className="lg:col-span-3">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-lg">Who pays whom</CardTitle>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {formatMoney(totalInRange)} across {expenses.length} expense{expenses.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={copySettlementSummary}
+                    disabled={settlements.length === 0}
+                    className="shrink-0 gap-1.5"
                   >
-                    <SelectTrigger className="h-8 w-[140px] text-xs">
-                      <div className="flex items-center gap-1">
+                    {copiedSettlement ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {copiedSettlement ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <SettleUpList settlements={settlements} />
+                {settlements.length > 1 && (
+                  <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+                    {settlements.length} payments, {formatMoney(settlements.reduce((s, x) => s + x.amount, 0))} in
+                    total — the fewest transfers that square everyone up.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Balances</CardTitle>
+                <p className="text-xs text-muted-foreground">Paid minus their share of each expense.</p>
+              </CardHeader>
+              <CardContent>
+                <BalanceList balances={balances} />
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Transactions */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="text-lg">
+                  Expenses <span className="text-sm font-normal text-muted-foreground">({expenses.length})</span>
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Select value={sortBy} onValueChange={(value: typeof sortBy) => setSortBy(value)}>
+                    <SelectTrigger className="h-9 w-[150px] text-xs" aria-label="Sort expenses">
+                      <div className="flex items-center gap-1.5">
                         <ArrowUpDown className="w-3 h-3" />
                         <SelectValue />
                       </div>
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
-                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
-                      <SelectItem value="amount-desc">Amount (High)</SelectItem>
-                      <SelectItem value="amount-asc">Amount (Low)</SelectItem>
-                      <SelectItem value="title-asc">Title (A-Z)</SelectItem>
-                      <SelectItem value="title-desc">Title (Z-A)</SelectItem>
+                      <SelectItem value="date-desc">Newest first</SelectItem>
+                      <SelectItem value="date-asc">Oldest first</SelectItem>
+                      <SelectItem value="amount-desc">Highest amount</SelectItem>
+                      <SelectItem value="amount-asc">Lowest amount</SelectItem>
+                      <SelectItem value="title-asc">Title A–Z</SelectItem>
+                      <SelectItem value="title-desc">Title Z–A</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm font-medium whitespace-nowrap">
-                    Paid By:
-                  </Label>
                   <Popover>
                     <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs min-w-[120px] justify-between"
-                      >
+                      <Button variant="outline" size="sm" className="h-9 min-w-[120px] justify-between text-xs">
                         <span className="truncate">
+                          Paid by:{" "}
                           {paidByFilter.length === 0
-                            ? "All"
+                            ? "anyone"
                             : paidByFilter.length === 1
-                            ? flatmates.find((f) => f.id === paidByFilter[0])
-                                ?.name || "Selected"
-                            : `${paidByFilter.length} selected`}
+                            ? nameById.get(paidByFilter[0]) || "1 person"
+                            : `${paidByFilter.length} people`}
                         </span>
                         <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
                       </Button>
@@ -1573,18 +1464,9 @@ export default function Reports() {
                     <PopoverContent className="w-56 p-2" align="end">
                       <div className="space-y-2">
                         <div className="flex items-center justify-between px-2 pb-1 border-b">
-                          <Label className="text-sm font-medium">
-                            Select People
-                          </Label>
+                          <Label className="text-sm font-medium">Paid by</Label>
                           {paidByFilter.length > 0 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 text-xs"
-                              onClick={() => {
-                                setPaidByFilter([]);
-                              }}
-                            >
+                            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setPaidByFilter([])}>
                               Clear
                             </Button>
                           )}
@@ -1593,25 +1475,18 @@ export default function Reports() {
                           {flatmates.map((flatmate) => (
                             <div
                               key={flatmate.id}
-                              className="flex items-center space-x-2 px-2 py-1 hover:bg-secondary/50 rounded"
+                              className="flex items-center space-x-2 px-2 py-1.5 hover:bg-secondary/50 rounded"
                             >
                               <Checkbox
                                 id={`table-paidby-${flatmate.id}`}
                                 checked={paidByFilter.includes(flatmate.id)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setPaidByFilter([
-                                      ...paidByFilter,
-                                      flatmate.id,
-                                    ]);
-                                  } else {
-                                    setPaidByFilter(
-                                      paidByFilter.filter(
-                                        (id) => id !== flatmate.id
-                                      )
-                                    );
-                                  }
-                                }}
+                                onCheckedChange={(checked) =>
+                                  setPaidByFilter(
+                                    checked
+                                      ? [...paidByFilter, flatmate.id]
+                                      : paidByFilter.filter((id) => id !== flatmate.id)
+                                  )
+                                }
                               />
                               <Label
                                 htmlFor={`table-paidby-${flatmate.id}`}
@@ -1627,215 +1502,123 @@ export default function Reports() {
                   </Popover>
                 </div>
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {expenses.map((expense) => {
-                const paidByFlatmate = flatmates.find(
-                  (f) => f.id === expense.paid_by
-                );
-                const splitCount = expense.expense_splits.length;
-                const sharePerPerson = expense.amount / splitCount;
-                const splitWith = expense.expense_splits
-                  .map((split) => {
-                    const flatmate = flatmates.find(
-                      (f) => f.id === split.flatmate_id
-                    );
-                    return flatmate?.name;
-                  })
-                  .filter(Boolean)
-                  .join(", ");
-
-                return (
-                  <div
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="max-h-[28rem] divide-y divide-border/70 overflow-y-auto">
+                {expenses.map((expense) => (
+                  <ExpenseRow
                     key={expense.id}
-                    className="p-3 bg-secondary/30 rounded-lg border border-border/50 hover:border-primary/30 transition-colors"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <h3 className="font-semibold text-base">
-                            {expense.title}
-                          </h3>
-                          {expense.categories && (
-                            <Badge variant="secondary" className="text-xs">
-                              {expense.categories.name}
-                            </Badge>
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(expense.date), "MMM dd, yyyy")}
-                          </span>
-                        </div>
-                        <div className="text-sm text-muted-foreground space-y-1">
-                          <p>
-                            Paid by{" "}
-                            <span className="font-medium text-foreground">
-                              {paidByFlatmate?.name || "Unknown"}
-                            </span>
-                          </p>
-                          <p>
-                            Split between {splitCount}{" "}
-                            {splitCount === 1 ? "person" : "people"}:{" "}
-                            {splitWith}
-                          </p>
-                          <p>${sharePerPerson.toFixed(2)} per person</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xl font-bold text-primary">
-                          ${expense.amount.toFixed(2)}
-                        </div>
-                      </div>
-                    </div>
+                    expense={expense}
+                    nameOf={(id) => nameById.get(id) ?? "Unknown"}
+                  />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {/* Export & share */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Export & share</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Everything below uses the period and filters above.
+          </p>
+        </CardHeader>
+        <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <ExportButton
+            icon={pdfLoading === "summary" ? Loader2 : Download}
+            spin={pdfLoading === "summary"}
+            title="Summary PDF"
+            subtitle="Balances + who pays whom"
+            onClick={generateSummaryPDF}
+            disabled={pdfLoading === "summary" || balances.length === 0}
+          />
+          <ExportButton
+            icon={pdfLoading === "all-expenses" ? Loader2 : Download}
+            spin={pdfLoading === "all-expenses"}
+            title="Expenses PDF"
+            subtitle="Every expense, line by line"
+            onClick={generateAllExpensesPDF}
+            disabled={pdfLoading === "all-expenses" || expenses.length === 0}
+          />
+          <ExportButton
+            icon={copiedExpenses ? Check : Copy}
+            title={copiedExpenses ? "Copied" : "Copy breakdown"}
+            subtitle="Text, grouped by who paid"
+            onClick={copyAllExpenses}
+            disabled={expenses.length === 0}
+          />
+          <ExportButton
+            icon={sharing ? Loader2 : Share2}
+            spin={sharing}
+            title="Public link"
+            subtitle="Read-only snapshot anyone can open"
+            onClick={createShareLink}
+            disabled={sharing || balances.length === 0 || !selectedSplitSpace}
+          />
+        </CardContent>
+      </Card>
+
+      {/* All settlements modal */}
+      <Dialog open={allSettlementsOpen} onOpenChange={setAllSettlementsOpen}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bookmark className="w-5 h-5" />
+              Settlement history
+            </DialogTitle>
+            <DialogDescription>Periods you've marked as settled in this SplitSpace.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {savedSettlements.map((s) => (
+              <div
+                key={s.id}
+                className="flex items-start justify-between gap-3 rounded-lg border border-border/60 p-3"
+              >
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => {
+                    setDateRange({ from: parseDay(s.from_date), to: parseDay(s.to_date) });
+                    setAllSettlementsOpen(false);
+                  }}
+                  title="View this period"
+                >
+                  <div className="text-sm font-medium">
+                    {format(parseDay(s.from_date), "d MMM")} – {format(parseDay(s.to_date), "d MMM yyyy")}
                   </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                  {s.note && <div className="text-xs text-muted-foreground mt-1 break-words">{s.note}</div>}
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Marked {format(new Date(s.created_at), "d MMM yyyy")} · tap to view
+                  </div>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-destructive flex-shrink-0"
+                  onClick={() => setSettlementToDelete(s.id)}
+                  aria-label="Delete settlement"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      {expenses.length === 0 && (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Receipt className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">
-              No expenses found matching the selected filters and date range.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Reports */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {/* All Expenses Report */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="hidden sm:inline">All Expenses</span>
-              <span className="sm:hidden">Expenses</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              <span className="hidden sm:inline">
-                Download a detailed report of all expenses in the selected
-                period.
-              </span>
-              <span className="sm:hidden">
-                Download detailed expense report.
-              </span>
-            </p>
-            <Button
-              onClick={generateAllExpensesPDF}
-              disabled={pdfLoading === "all-expenses"}
-              className="w-full"
-            >
-              {pdfLoading === "all-expenses" ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  <span className="hidden sm:inline">Generating...</span>
-                  <span className="sm:hidden">Generating</span>
-                </>
-              ) : (
-                <>
-                  <Download className="mr-2 h-4 w-4" />
-                  <span className="hidden sm:inline">Download PDF</span>
-                  <span className="sm:hidden">Download</span>
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Balance Summary Report */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Receipt className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span className="hidden sm:inline">Balance Summary</span>
-              <span className="sm:hidden">Summary</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              <span className="hidden sm:inline">
-                Download settlement summary with balances and transaction
-                details.
-              </span>
-              <span className="sm:hidden">Download settlement summary.</span>
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Button
-                onClick={generateSummaryPDF}
-                disabled={pdfLoading === "summary"}
-                className="flex-1 w-full sm:w-auto"
-              >
-                {pdfLoading === "summary" ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    <span className="hidden sm:inline">Generating...</span>
-                    <span className="sm:hidden">Generating</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="mr-2 h-4 w-4" />
-                    <span className="hidden sm:inline">Download PDF</span>
-                    <span className="sm:hidden">Download</span>
-                  </>
-                )}
-              </Button>
-              {/* <Button
-                variant="outline"
-                onClick={() => setEmailDialogOpen(true)}
-                className="flex-1 w-full sm:w-auto"
-              >
-                <Mail className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline">Send via Email</span>
-                <span className="sm:hidden">Email</span>
-              </Button> */}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Share public link */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Share2 className="h-4 w-4 sm:h-5 sm:w-5" />
-              Share
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Generate a public web link with the current Summary, Settlements,
-              and Expenses. Snapshot — anyone with the link can view it.
-            </p>
-            <Button
-              onClick={createShareLink}
-              disabled={
-                sharing || balances.length === 0 || !selectedSplitSpace
-              }
-              className="w-full"
-              variant="secondary"
-            >
-              {sharing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating link
-                </>
-              ) : (
-                <>
-                  <Share2 className="mr-2 h-4 w-4" />
-                  Create Public Link
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <ConfirmDialog
+        open={!!settlementToDelete}
+        onOpenChange={(open) => !open && setSettlementToDelete(null)}
+        title="Remove this settlement mark?"
+        description="Only the saved date range is removed — no expenses are touched."
+        confirmLabel="Remove"
+        onConfirm={async () => {
+          if (settlementToDelete) await deleteSavedSettlement(settlementToDelete);
+        }}
+      />
 
       {/* Share result dialog */}
       <Dialog
@@ -1855,8 +1638,7 @@ export default function Reports() {
               Public link ready
             </DialogTitle>
             <DialogDescription>
-              Anyone with this link can view the snapshot. New expenses won't
-              change what they see.
+              Anyone with this link can view the snapshot. New expenses won't change what they see.
             </DialogDescription>
           </DialogHeader>
           {shareUrl && (
@@ -1891,176 +1673,6 @@ export default function Reports() {
         </DialogContent>
       </Dialog>
 
-      {/* Balance Summary */}
-      {balances.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              Balance Summary
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-              <table className="w-full border-collapse min-w-[600px] sm:min-w-0">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2 text-xs sm:text-sm">Name</th>
-                    <th className="text-right p-2 text-xs sm:text-sm">
-                      <span className="hidden sm:inline">Total Paid</span>
-                      <span className="sm:hidden">Paid</span>
-                    </th>
-                    <th className="text-right p-2 text-xs sm:text-sm">
-                      <span className="hidden sm:inline">Total Owed</span>
-                      <span className="sm:hidden">Owed</span>
-                    </th>
-                    <th className="text-right p-2 text-xs sm:text-sm">
-                      <span className="hidden sm:inline">Net Balance</span>
-                      <span className="sm:hidden">Balance</span>
-                    </th>
-                    <th className="text-center p-2 text-xs sm:text-sm">
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {balances.map((balance) => (
-                    <tr key={balance.id} className="border-b">
-                      <td className="p-2 font-medium text-sm sm:text-base">
-                        {balance.name}
-                      </td>
-                      <td className="p-2 text-right text-sm sm:text-base">
-                        <span className="hidden sm:inline">
-                          ₹{balance.totalPaid.toFixed(2)}
-                        </span>
-                        <span className="sm:hidden">
-                          ₹{balance.totalPaid.toFixed(0)}
-                        </span>
-                      </td>
-                      <td className="p-2 text-right text-sm sm:text-base">
-                        <span className="hidden sm:inline">
-                          ₹{balance.totalOwed.toFixed(2)}
-                        </span>
-                        <span className="sm:hidden">
-                          ₹{balance.totalOwed.toFixed(0)}
-                        </span>
-                      </td>
-                      <td className="p-2 text-right font-semibold text-sm sm:text-base">
-                        <span className="hidden sm:inline">
-                          {balance.balance >= 0
-                            ? `+₹${balance.balance.toFixed(2)}`
-                            : `-₹${Math.abs(balance.balance).toFixed(2)}`}
-                        </span>
-                        <span className="sm:hidden">
-                          {balance.balance >= 0
-                            ? `+₹${balance.balance.toFixed(0)}`
-                            : `-₹${Math.abs(balance.balance).toFixed(0)}`}
-                        </span>
-                      </td>
-                      <td className="p-2 text-center text-xs sm:text-sm">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            balance.balance > 0
-                              ? "bg-green-100 text-green-800"
-                              : balance.balance < 0
-                              ? "bg-red-100 text-red-800"
-                              : "bg-gray-100 text-gray-800"
-                          }`}
-                        >
-                          {balance.balance > 0
-                            ? "Owes Money"
-                            : balance.balance < 0
-                            ? "Needs Money"
-                            : "Settled"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Settlement Instructions */}
-      {settlements.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              Settlement Instructions
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 sm:space-y-4">
-              {settlements.map((settlement, index) => (
-                <div
-                  key={index}
-                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 bg-green-50 rounded-lg border border-green-200 gap-2 sm:gap-0"
-                >
-                  <div className="flex items-center gap-2 sm:gap-4">
-                    <span className="font-bold text-green-800 text-sm sm:text-base">
-                      {index + 1}.
-                    </span>
-                    <span className="text-green-800 text-sm sm:text-base">
-                      {settlement.from}
-                    </span>
-                    <span className="text-green-600 text-sm sm:text-base">
-                      →
-                    </span>
-                    <span className="text-green-800 text-sm sm:text-base">
-                      {settlement.to}
-                    </span>
-                  </div>
-                  <span className="font-bold text-green-800 text-sm sm:text-base">
-                    ₹{settlement.amount.toFixed(2)}
-                  </span>
-                </div>
-              ))}
-              <div className="mt-4 p-3 sm:p-4 bg-green-100 rounded-lg">
-                <p className="font-bold text-green-800 text-sm sm:text-base">
-                  <span className="hidden sm:inline">
-                    Settlement Complete! Total transactions:{" "}
-                    {settlements.length}
-                  </span>
-                  <span className="sm:hidden">
-                    Complete! {settlements.length} transaction
-                    {settlements.length !== 1 ? "s" : ""}
-                  </span>
-                </p>
-                <p className="text-green-700 text-xs sm:text-sm mt-1">
-                  <span className="hidden sm:inline">
-                    Total amount to be transferred: ₹
-                  </span>
-                  <span className="sm:hidden">Total: ₹</span>
-                  {settlements.reduce((sum, s) => sum + s.amount, 0).toFixed(2)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* All Settled Up */}
-      {settlements.length === 0 && balances.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg sm:text-xl">
-              All Settled Up! 🎉
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-green-600 text-sm sm:text-base">
-              <span className="hidden sm:inline">
-                No money needs to be transferred between flatmates.
-              </span>
-              <span className="sm:hidden">
-                All settled! No transfers needed.
-              </span>
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Email Report Dialog */}
       <EmailReportDialog
         open={emailDialogOpen}
@@ -2071,3 +1683,34 @@ export default function Reports() {
     </div>
   );
 }
+
+const ExportButton = ({
+  icon: Icon,
+  spin,
+  title,
+  subtitle,
+  onClick,
+  disabled,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  spin?: boolean;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    className="flex items-center gap-3 rounded-lg border border-border/70 p-3 text-left transition-colors hover:border-primary/40 hover:bg-secondary/50 disabled:cursor-not-allowed disabled:opacity-50"
+  >
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary">
+      <Icon className={cn("h-4 w-4", spin && "animate-spin")} />
+    </span>
+    <span className="min-w-0">
+      <span className="block text-sm font-medium">{title}</span>
+      <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+    </span>
+  </button>
+);

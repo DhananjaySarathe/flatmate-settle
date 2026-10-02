@@ -11,6 +11,8 @@ interface Flatmate {
 
 interface PeopleFiltersProps {
   flatmates: Flatmate[];
+  /** Currently applied filters, so reopening the panel shows what's active. */
+  value?: { exactMatch: string[]; anyMatch: string[]; exclude: string[]; paidBy: string[] };
   onFiltersChange: (filters: {
     exactMatch: string[];
     anyMatch: string[];
@@ -51,12 +53,13 @@ const SECTIONS: SectionConfig[] = [
 
 export const PeopleFilters = ({
   flatmates,
+  value,
   onFiltersChange,
 }: PeopleFiltersProps) => {
-  const [exactMatch, setExactMatch] = useState<string[]>([]);
-  const [anyMatch, setAnyMatch] = useState<string[]>([]);
-  const [exclude, setExclude] = useState<string[]>([]);
-  const paidBy: string[] = [];
+  const [exactMatch, setExactMatch] = useState<string[]>(value?.exactMatch ?? []);
+  const [anyMatch, setAnyMatch] = useState<string[]>(value?.anyMatch ?? []);
+  const [exclude, setExclude] = useState<string[]>(value?.exclude ?? []);
+  const paidBy: string[] = value?.paidBy ?? [];
 
   const setters: Record<Section, React.Dispatch<React.SetStateAction<string[]>>> = {
     exactMatch: setExactMatch,

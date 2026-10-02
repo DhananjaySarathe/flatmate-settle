@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface SplitSpace {
@@ -24,6 +24,8 @@ export const SplitSpaceProvider = ({ children }: { children: ReactNode }) => {
   const [selectedSplitSpace, setSelectedSplitSpaceState] = useState<SplitSpace | null>(null);
   const [splitSpaces, setSplitSpaces] = useState<SplitSpace[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasSpacesRef = useRef(false);
+  hasSpacesRef.current = splitSpaces.length > 0;
 
   const fetchSplitSpaces = async () => {
     try {
@@ -82,6 +84,23 @@ export const SplitSpaceProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     fetchSplitSpaces();
+
+    // The provider mounts before login, so reload spaces once a user signs in
+    // (and forget them on sign-out) instead of waiting for a page refresh.
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN") {
+        // Fresh login: show loading so pages don't query before a space is picked.
+        // (SIGNED_IN also fires on session recovery — don't flash loaders then.)
+        if (!hasSpacesRef.current) setLoading(true);
+        fetchSplitSpaces();
+      } else if (event === "SIGNED_OUT") {
+        setSplitSpaces([]);
+        setSelectedSplitSpaceState(null);
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   // Load selected split space from localStorage on mount

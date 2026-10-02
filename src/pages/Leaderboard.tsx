@@ -281,11 +281,11 @@ export default function Leaderboard() {
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-5 sm:space-y-6">
+    <div className="mx-auto max-w-5xl space-y-5 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1 flex items-center gap-2">
-            <Trophy className="w-7 h-7 sm:w-9 sm:h-9 text-amber-500" />
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1 flex items-center gap-2">
+            <Trophy className="w-6 h-6 sm:w-7 sm:h-7 text-amber-500" />
             Leaderboard
           </h1>
           <p className="text-sm sm:text-base text-muted-foreground">

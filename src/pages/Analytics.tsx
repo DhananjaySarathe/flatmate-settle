@@ -485,10 +485,10 @@ export default function Analytics() {
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-1">Analytics</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1">Analytics</h1>
           <p className="text-sm sm:text-base text-muted-foreground">
             Spending patterns, trends, and fairness — at a glance.
           </p>
@@ -566,6 +566,7 @@ export default function Analytics() {
                   <div className="space-y-6 mt-2">
                     <PeopleFilters
                       flatmates={flatmates}
+                      value={peopleFilters}
                       onFiltersChange={setPeopleFilters}
                     />
 
