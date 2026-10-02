@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -24,7 +25,7 @@ import {
   Trash2,
   Link as LinkIcon,
 } from "lucide-react";
-import { format } from "date-fns";
+import { addDays, endOfMonth, format, isSameDay, parseISO, startOfMonth, subMonths } from "date-fns";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -160,6 +161,7 @@ export default function Reports() {
     created_at: string;
   }
   const [savedSettlements, setSavedSettlements] = useState<SavedSettlement[]>([]);
+  const [savedSettlementsLoaded, setSavedSettlementsLoaded] = useState(false);
   const [allSettlementsOpen, setAllSettlementsOpen] = useState(false);
   const [markSettlementOpen, setMarkSettlementOpen] = useState(false);
   const [settlementNote, setSettlementNote] = useState("");
@@ -503,9 +505,28 @@ export default function Reports() {
         return;
       }
       setSavedSettlements(data || []);
+      setSavedSettlementsLoaded(true);
     };
     loadSavedSettlements();
   }, [selectedSplitSpace]);
+
+  // Home links here with ?period=unsettled to open on "since last settle-up".
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("period") !== "unsettled" || contextLoading) return;
+    const latest = savedSettlements.reduce<string | null>(
+      (acc, s) => (!acc || s.to_date > acc ? s.to_date : acc),
+      null
+    );
+    if (latest) {
+      setDateRange({ from: addDays(parseISO(latest), 1), to: new Date() });
+    }
+    if (latest || savedSettlementsLoaded) {
+      searchParams.delete("period");
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSettlements, savedSettlementsLoaded, contextLoading]);
 
   const refreshSavedSettlements = async () => {
     if (!selectedSplitSpace) return;
@@ -1127,6 +1148,20 @@ export default function Reports() {
     }
   };
 
+  const today = new Date();
+  const lastSettledThrough = savedSettlements.reduce<string | null>(
+    (latest, s) => (!latest || s.to_date > latest ? s.to_date : latest),
+    null
+  );
+  const lastMonth = subMonths(today, 1);
+  const datePresets = [
+    ...(lastSettledThrough
+      ? [{ label: "Since last settle-up", from: addDays(parseISO(lastSettledThrough), 1), to: today }]
+      : []),
+    { label: "This month", from: startOfMonth(today), to: today },
+    { label: "Last month", from: startOfMonth(lastMonth), to: endOfMonth(lastMonth) },
+  ];
+
   // Allow page to work even if SplitSpaces feature isn't fully set up
   if (!selectedSplitSpace && splitSpaces.length > 0) {
     return (
@@ -1149,16 +1184,13 @@ export default function Reports() {
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="max-w-6xl mx-auto space-y-4 sm:space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
-          {selectedSplitSpace && (
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">
-              <span className="hidden sm:inline">SplitSpace: </span>
-              {selectedSplitSpace.name}
-            </p>
-          )}
+          <h1 className="text-2xl sm:text-3xl font-bold">Settle up</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Balances and payments for the dates you pick. Mark them settled, share or export.
+          </p>
         </div>
         {selectedSplitSpace && savedSettlements.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -1234,7 +1266,7 @@ export default function Reports() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle>Select Date Range</CardTitle>
+            <CardTitle>Period</CardTitle>
             <div className="flex items-center gap-2 flex-wrap">
               {selectedSplitSpace && (
                 <Dialog
@@ -1378,7 +1410,25 @@ export default function Reports() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
+          {/* Quick periods, so the common "what do we owe since we last settled?" is one tap */}
+          <div className="flex flex-wrap gap-2 mb-3">
+            {datePresets.map((preset) => {
+              const active =
+                isSameDay(dateRange.from, preset.from) && isSameDay(dateRange.to, preset.to);
+              return (
+                <Button
+                  key={preset.label}
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  className="h-8 rounded-full"
+                  onClick={() => setDateRange({ from: preset.from, to: preset.to })}
+                >
+                  {preset.label}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-4 sm:items-center">
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -1390,16 +1440,7 @@ export default function Reports() {
                 >
                   <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="truncate">
-                    {dateRange.from ? (
-                      format(dateRange.from, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick start date</span>
-                    )}
-                    {dateRange.from && (
-                      <span className="sm:hidden">
-                        {format(dateRange.from, "MMM dd")}
-                      </span>
-                    )}
+                    {dateRange.from ? format(dateRange.from, "d MMM yyyy") : "Pick start date"}
                   </span>
                 </Button>
               </PopoverTrigger>
@@ -1415,12 +1456,7 @@ export default function Reports() {
               </PopoverContent>
             </Popover>
 
-            <span className="text-muted-foreground text-center sm:text-left hidden sm:inline">
-              to
-            </span>
-            <span className="text-muted-foreground text-center sm:hidden">
-              ↓
-            </span>
+            <span className="text-muted-foreground hidden sm:inline">to</span>
 
             <Popover>
               <PopoverTrigger asChild>
@@ -1433,16 +1469,7 @@ export default function Reports() {
                 >
                   <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
                   <span className="truncate">
-                    {dateRange.to ? (
-                      format(dateRange.to, "PPP")
-                    ) : (
-                      <span className="hidden sm:inline">Pick end date</span>
-                    )}
-                    {dateRange.to && (
-                      <span className="sm:hidden">
-                        {format(dateRange.to, "MMM dd")}
-                      </span>
-                    )}
+                    {dateRange.to ? format(dateRange.to, "d MMM yyyy") : "Pick end date"}
                   </span>
                 </Button>
               </PopoverTrigger>
@@ -1679,12 +1706,12 @@ export default function Reports() {
                             {splitCount === 1 ? "person" : "people"}:{" "}
                             {splitWith}
                           </p>
-                          <p>${sharePerPerson.toFixed(2)} per person</p>
+                          <p>₹{sharePerPerson.toFixed(2)} per person</p>
                         </div>
                       </div>
                       <div className="text-right">
                         <div className="text-xl font-bold text-primary">
-                          ${expense.amount.toFixed(2)}
+                          ₹{expense.amount.toFixed(2)}
                         </div>
                       </div>
                     </div>
@@ -1967,9 +1994,9 @@ export default function Reports() {
                           }`}
                         >
                           {balance.balance > 0
-                            ? "Owes Money"
+                            ? "Is owed"
                             : balance.balance < 0
-                            ? "Needs Money"
+                            ? "Owes"
                             : "Settled"}
                         </span>
                       </td>

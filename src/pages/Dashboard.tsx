@@ -1,4 +1,19 @@
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { format, parseISO } from "date-fns";
+import { toast } from "sonner";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Receipt,
+  Trash2,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,352 +25,554 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
-import { toast } from "sonner";
-import { Plus, Users, Trash2, Edit, Loader2 } from "lucide-react";
-import { motion } from "framer-motion";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ExpenseFormDialog } from "@/components/ExpenseFormDialog";
+import { PersonAvatar } from "@/components/PersonAvatar";
 import { useSplitSpace } from "@/contexts/SplitSpaceContext";
+import { SpaceFlatmate, useSpaceData } from "@/hooks/useSpaceData";
+import { calculateBalances, calculateSettlements } from "@/lib/settlement";
+import { formatINR } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-interface Flatmate {
-  id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-}
+type Period = "unsettled" | "all";
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const { selectedSplitSpace } = useSplitSpace();
-  const [flatmates, setFlatmates] = useState<Flatmate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingFlatmate, setEditingFlatmate] = useState<Flatmate | null>(null);
-  const [formData, setFormData] = useState({ name: "", email: "", phone: "" });
-  const [submitLoading, setSubmitLoading] = useState(false);
-  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const { flatmates, expenses, settlements, loading, needsSpace, refresh } = useSpaceData({
+    withSettlements: true,
+  });
 
-  useEffect(() => {
-    fetchFlatmates();
-  }, [selectedSplitSpace]);
+  const [period, setPeriod] = useState<Period>("unsettled");
+  const [expenseOpen, setExpenseOpen] = useState(false);
+  const [personOpen, setPersonOpen] = useState(false);
+  const [editingPerson, setEditingPerson] = useState<SpaceFlatmate | null>(null);
+  const [personForm, setPersonForm] = useState({ name: "", email: "", phone: "" });
+  const [savingPerson, setSavingPerson] = useState(false);
+  const [deletingPerson, setDeletingPerson] = useState<SpaceFlatmate | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
-  const fetchFlatmates = async () => {
-    try {
-      let query = supabase
-        .from("flatmates")
-        .select("*")
-        .order("created_at", { ascending: true });
+  // The most recent marked settlement closes the books up to its end date.
+  const lastSettledThrough = settlements[0]?.to_date ?? null;
 
-      // If split_space_id column exists and we have a selected space, filter by it
-      if (selectedSplitSpace) {
-        try {
-          const { data, error } = await query
-            .or(`split_space_id.eq.${selectedSplitSpace.id},split_space_id.is.null`);
-          if (error) throw error;
-          setFlatmates(data || []);
-        } catch (filterError: any) {
-          // If filter fails (column doesn't exist), try without filter
-          if (filterError.message?.includes("column") || filterError.code === "42703") {
-            const { data, error } = await supabase
-              .from("flatmates")
-              .select("*")
-              .order("created_at", { ascending: true });
-            if (error) throw error;
-            setFlatmates(data || []);
-          } else {
-            throw filterError;
-          }
-        }
-      } else {
-        // No split space selected, fetch all
-        const { data, error } = await query;
-        if (error) throw error;
-        setFlatmates(data || []);
-      }
-    } catch (error: any) {
-      toast.error("Error fetching flatmates");
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
+  const periodExpenses = useMemo(() => {
+    if (period === "all" || !lastSettledThrough) return expenses;
+    return expenses.filter((e) => e.date > lastSettledThrough);
+  }, [expenses, period, lastSettledThrough]);
+
+  const balances = useMemo(
+    () => calculateBalances(flatmates, periodExpenses),
+    [flatmates, periodExpenses]
+  );
+  const transfers = useMemo(() => calculateSettlements(balances), [balances]);
+  const totalSpent = periodExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const maxAbsBalance = Math.max(1, ...balances.map((b) => Math.abs(b.balance)));
+  const nameToId = useMemo(() => new Map(flatmates.map((f) => [f.name, f.id])), [flatmates]);
+
+  // Deleting a person cascades in the database: their paid expenses and splits go with them.
+  const deletingImpact = useMemo(() => {
+    if (!deletingPerson) return { paid: 0, paidTotal: 0, splitIn: 0 };
+    const paid = expenses.filter((e) => e.paid_by === deletingPerson.id);
+    const splitIn = expenses.filter(
+      (e) => e.paid_by !== deletingPerson.id && e.expense_splits.some((s) => s.flatmate_id === deletingPerson.id)
+    );
+    return {
+      paid: paid.length,
+      paidTotal: paid.reduce((sum, e) => sum + e.amount, 0),
+      splitIn: splitIn.length,
+    };
+  }, [deletingPerson, expenses]);
+
+  const openAddPerson = () => {
+    setEditingPerson(null);
+    setPersonForm({ name: "", email: "", phone: "" });
+    setPersonOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const openEditPerson = (person: SpaceFlatmate) => {
+    setEditingPerson(person);
+    setPersonForm({ name: person.name, email: person.email || "", phone: person.phone || "" });
+    setPersonOpen(true);
+  };
 
-    if (!formData.name) {
+  const savePerson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = personForm.name.trim();
+    if (!name) {
       toast.error("Name is required");
       return;
     }
-
-    setSubmitLoading(true);
+    setSavingPerson(true);
     try {
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      if (editingFlatmate) {
+      if (editingPerson) {
         const { error } = await supabase
           .from("flatmates")
-          .update({
-            name: formData.name,
-            email: formData.email || null,
-            phone: formData.phone || null,
-          })
-          .eq("id", editingFlatmate.id);
-
+          .update({ name, email: personForm.email || null, phone: personForm.phone || null })
+          .eq("id", editingPerson.id);
         if (error) throw error;
-        toast.success("Flatmate updated successfully");
+        toast.success(`${name} updated`);
       } else {
-        const flatmateDataToInsert: any = {
-          name: formData.name,
-          email: formData.email || null,
-          phone: formData.phone || null,
+        const insert: any = {
+          name,
+          email: personForm.email || null,
+          phone: personForm.phone || null,
           created_by: user.id,
         };
-
-        // Only add split_space_id if it exists and is selected
-        if (selectedSplitSpace) {
-          flatmateDataToInsert.split_space_id = selectedSplitSpace.id;
-        }
-
-        const { error } = await supabase.from("flatmates").insert(flatmateDataToInsert);
-
+        if (selectedSplitSpace) insert.split_space_id = selectedSplitSpace.id;
+        const { error } = await supabase.from("flatmates").insert(insert);
         if (error) throw error;
-        toast.success("Flatmate added successfully");
+        toast.success(`${name} added`);
       }
-
-      setDialogOpen(false);
-      setFormData({ name: "", email: "", phone: "" });
-      setEditingFlatmate(null);
-      fetchFlatmates();
+      setPersonOpen(false);
+      refresh();
     } catch (error: any) {
       toast.error(error.message);
       console.error(error);
     } finally {
-      setSubmitLoading(false);
+      setSavingPerson(false);
     }
   };
 
-  const handleEdit = (flatmate: Flatmate) => {
-    setEditingFlatmate(flatmate);
-    setFormData({
-      name: flatmate.name,
-      email: flatmate.email || "",
-      phone: flatmate.phone || "",
-    });
-    setDialogOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this flatmate?")) return;
-
-    setDeleteLoading(id);
+  const confirmDeletePerson = async () => {
+    if (!deletingPerson) return;
+    setDeleteBusy(true);
     try {
-      const { error } = await supabase.from("flatmates").delete().eq("id", id);
-
+      const { error } = await supabase.from("flatmates").delete().eq("id", deletingPerson.id);
       if (error) throw error;
-      toast.success("Flatmate deleted");
-      fetchFlatmates();
+      toast.success(`${deletingPerson.name} removed`);
+      setDeletingPerson(null);
+      refresh();
     } catch (error: any) {
       toast.error(error.message);
       console.error(error);
     } finally {
-      setDeleteLoading(null);
+      setDeleteBusy(false);
     }
   };
 
-  const resetForm = () => {
-    setFormData({ name: "", email: "", phone: "" });
-    setEditingFlatmate(null);
-  };
-
-  // Allow page to work even without SplitSpace selected (for backward compatibility)
+  if (needsSpace) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center text-muted-foreground">
+        Select a split space to continue.
+      </div>
+    );
+  }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  const periodLabel =
+    period === "all" || !lastSettledThrough
+      ? "All time"
+      : `After ${format(parseISO(lastSettledThrough), "d MMM yyyy")}`;
+
+  const personDialog = (
+    <Dialog open={personOpen} onOpenChange={setPersonOpen}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{editingPerson ? "Edit person" : "Add a person"}</DialogTitle>
+          <DialogDescription>
+            Only the name is needed. Email lets you send them reports later.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={savePerson} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="person-name">Name</Label>
+            <Input
+              id="person-name"
+              autoFocus
+              value={personForm.name}
+              onChange={(e) => setPersonForm({ ...personForm, name: e.target.value })}
+              placeholder="e.g. Priya"
+              required
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="person-email">Email (optional)</Label>
+              <Input
+                id="person-email"
+                type="email"
+                value={personForm.email}
+                onChange={(e) => setPersonForm({ ...personForm, email: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="person-phone">Phone (optional)</Label>
+              <Input
+                id="person-phone"
+                type="tel"
+                value={personForm.phone}
+                onChange={(e) => setPersonForm({ ...personForm, phone: e.target.value })}
+              />
+            </div>
+          </div>
+          <Button type="submit" className="w-full" disabled={savingPerson}>
+            {savingPerson && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {editingPerson ? "Save changes" : "Add person"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // First run: nobody to split with yet.
+  if (flatmates.length === 0) {
+    return (
+      <div className="mx-auto max-w-xl animate-fade-in py-6">
+        <Card className="overflow-hidden">
+          <CardContent className="space-y-6 p-6 sm:p-8">
+            <div>
+              <p className="text-sm font-medium text-primary">
+                {selectedSplitSpace?.name ?? "Your group"}
+              </p>
+              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Let's set up your group</h1>
+              <p className="mt-2 text-muted-foreground">
+                Two steps and you'll always know who owes whom.
+              </p>
+            </div>
+            <ol className="space-y-3">
+              <li className="flex items-start gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+                  1
+                </span>
+                <div className="flex-1">
+                  <p className="font-medium">Add the people you split with</p>
+                  <p className="text-sm text-muted-foreground">Include yourself, so your share counts too.</p>
+                </div>
+              </li>
+              <li className="flex items-start gap-3 rounded-xl border p-4 opacity-70">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold">
+                  2
+                </span>
+                <div>
+                  <p className="font-medium">Log what someone paid for</p>
+                  <p className="text-sm text-muted-foreground">We work out each person's share.</p>
+                </div>
+              </li>
+            </ol>
+            <Button size="lg" className="w-full" onClick={openAddPerson}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Add first person
+            </Button>
+          </CardContent>
+        </Card>
+        {personDialog}
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold gradient-text mb-2">Dashboard</h1>
-          <p className="text-muted-foreground text-sm sm:text-base">
-            Manage your flatmates and view expense overview
-          </p>
-          {selectedSplitSpace && (
-            <p className="text-sm text-muted-foreground mt-1">
-              SplitSpace: {selectedSplitSpace.name}
-            </p>
-          )}
+    <div className="mx-auto max-w-5xl animate-fade-in space-y-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm text-muted-foreground">Overview</p>
+          <h1 className="truncate text-2xl font-bold sm:text-3xl">
+            {selectedSplitSpace?.name ?? "Your group"}
+          </h1>
         </div>
-        <Dialog
-          open={dialogOpen}
-          onOpenChange={(open) => {
-            setDialogOpen(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button className="shadow-md shadow-primary/20 self-start sm:self-auto">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Flatmate
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {editingFlatmate ? "Edit Flatmate" : "Add New Flatmate"}
-              </DialogTitle>
-              <DialogDescription>
-                {editingFlatmate
-                  ? "Update flatmate information"
-                  : "Add a new flatmate to your group"}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name *</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData({ ...formData, email: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  value={formData.phone}
-                  onChange={(e) =>
-                    setFormData({ ...formData, phone: e.target.value })
-                  }
-                />
-              </div>
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={submitLoading}
-              >
-                {submitLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    {editingFlatmate ? "Updating..." : "Adding..."}
-                  </>
-                ) : editingFlatmate ? (
-                  "Update Flatmate"
-                ) : (
-                  "Add Flatmate"
-                )}
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <Button className="hidden shadow-md shadow-primary/20 md:inline-flex" onClick={() => setExpenseOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add expense
+        </Button>
       </div>
 
-      <Card className="glass-card hover-lift">
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Users className="w-5 h-5 mr-2 text-primary" />
-            Flatmates ({flatmates.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {flatmates.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground mb-4">
-                No flatmates added yet
-              </p>
-              <Button
-                onClick={() => setDialogOpen(true)}
-                variant="outline"
-                className="border-primary/30 hover:bg-primary/10"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Your First Flatmate
-              </Button>
+      {/* Period switch + headline numbers */}
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex gap-8">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Spent · {periodLabel}</p>
+              <p className="text-2xl font-bold tabular-nums sm:text-3xl">{formatINR(totalSpent)}</p>
             </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {flatmates.map((flatmate, index) => (
-                <motion.div
-                  key={flatmate.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  className="min-w-0"
-                >
-                  <Card className="bg-secondary/50 border-border/50 hover:border-primary/30 transition-colors">
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-lg mb-1 truncate">
-                            {flatmate.name}
-                          </h3>
-                          {flatmate.email && (
-                            <p className="text-sm text-muted-foreground truncate">
-                              {flatmate.email}
-                            </p>
-                          )}
-                          {flatmate.phone && (
-                            <p className="text-sm text-muted-foreground truncate">
-                              {flatmate.phone}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex space-x-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEdit(flatmate)}
-                            className="hover:bg-primary/10 hover:text-primary"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(flatmate.id)}
-                            className="hover:bg-destructive/10 hover:text-destructive"
-                            disabled={deleteLoading === flatmate.id}
-                          >
-                            {deleteLoading === flatmate.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Expenses</p>
+              <p className="text-2xl font-bold tabular-nums sm:text-3xl">{periodExpenses.length}</p>
             </div>
+          </div>
+          {lastSettledThrough && (
+            <ToggleGroup
+              type="single"
+              value={period}
+              onValueChange={(v) => v && setPeriod(v as Period)}
+              className="self-start rounded-lg bg-secondary p-1 sm:self-auto"
+            >
+              <ToggleGroupItem value="unsettled" className="h-8 px-3 text-xs data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm">
+                Since last settle-up
+              </ToggleGroupItem>
+              <ToggleGroupItem value="all" className="h-8 px-3 text-xs data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm">
+                All time
+              </ToggleGroupItem>
+            </ToggleGroup>
           )}
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        {/* Who pays whom */}
+        <Card className="min-w-0 lg:col-span-3">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+            <CardTitle className="text-lg">Who pays whom</CardTitle>
+            <Button variant="ghost" size="sm" asChild className="text-primary">
+              <Link to={period === "unsettled" && lastSettledThrough ? "/reports?period=unsettled" : "/reports"}>
+                Settle up <ArrowRight className="ml-1 h-4 w-4" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {transfers.length === 0 ? (
+              <div className="flex items-center gap-3 rounded-xl bg-accent/10 p-4">
+                <CheckCircle2 className="h-6 w-6 shrink-0 text-accent" />
+                <div>
+                  <p className="font-medium">Everyone's square</p>
+                  <p className="text-sm text-muted-foreground">
+                    {periodExpenses.length === 0 ? "No expenses in this period yet." : "No payments needed."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <ul className="divide-y">
+                {transfers.map((t, i) => (
+                  <li key={i} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+                    <PersonAvatar id={nameToId.get(t.from) ?? t.from} name={t.from} />
+                    <div className="min-w-0 flex-1 text-sm">
+                      <p className="truncate font-semibold">{t.from}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        pays <span className="font-medium text-foreground">{t.to}</span>
+                      </p>
+                    </div>
+                    <span className="whitespace-nowrap font-bold tabular-nums">{formatINR(t.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Net balances */}
+        <Card className="min-w-0 lg:col-span-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Balances</CardTitle>
+            <p className="text-xs text-muted-foreground">Paid minus their share of the split</p>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-3">
+              {[...balances]
+                .sort((a, b) => b.balance - a.balance)
+                .map((b) => {
+                  const settled = Math.abs(b.balance) < 0.01;
+                  const positive = b.balance > 0;
+                  const width = settled ? 0 : (Math.abs(b.balance) / maxAbsBalance) * 50;
+                  return (
+                    <li key={b.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span className="truncate font-medium">{b.name}</span>
+                        <span
+                          className={cn(
+                            "whitespace-nowrap text-xs font-semibold tabular-nums",
+                            settled ? "text-muted-foreground" : positive ? "text-accent" : "text-destructive"
+                          )}
+                        >
+                          {settled ? "Settled" : positive ? `Is owed ${formatINR(b.balance)}` : `Owes ${formatINR(-b.balance)}`}
+                        </span>
+                      </div>
+                      <div className="relative h-1.5 rounded-full bg-secondary">
+                        <span className="absolute left-1/2 top-0 h-full w-px bg-border" />
+                        {!settled && (
+                          <span
+                            className={cn(
+                              "absolute top-0 h-full rounded-full",
+                              positive ? "left-1/2 bg-accent" : "right-1/2 bg-destructive/80"
+                            )}
+                            style={{ width: `${width}%` }}
+                          />
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        {/* Recent expenses */}
+        <Card className="min-w-0 lg:col-span-3">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+            <CardTitle className="text-lg">Recent expenses</CardTitle>
+            {expenses.length > 0 && (
+              <Button variant="ghost" size="sm" asChild className="text-primary">
+                <Link to="/expenses">
+                  See all <ArrowRight className="ml-1 h-4 w-4" />
+                </Link>
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent>
+            {expenses.length === 0 ? (
+              <div className="py-8 text-center">
+                <Receipt className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
+                <p className="mb-4 text-muted-foreground">Nothing logged yet.</p>
+                <Button onClick={() => setExpenseOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add the first expense
+                </Button>
+              </div>
+            ) : (
+              <ul className="divide-y">
+                {expenses.slice(0, 5).map((e) => (
+                  <li key={e.id}>
+                    <button
+                      type="button"
+                      onClick={() => navigate("/expenses")}
+                      className="flex w-full items-center gap-3 py-3 text-left first:pt-0"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-secondary text-[10px] font-medium uppercase leading-tight text-muted-foreground">
+                        <span>{format(parseISO(e.date), "MMM")}</span>
+                        <span className="text-sm font-bold text-foreground">{format(parseISO(e.date), "d")}</span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">{e.title}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {e.flatmates?.name ?? "Someone"} paid · split {e.expense_splits.length} ways
+                        </p>
+                      </div>
+                      <span className="whitespace-nowrap font-semibold tabular-nums">{formatINR(e.amount)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* People */}
+        <Card className="min-w-0 lg:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              People <span className="text-sm font-normal text-muted-foreground">{flatmates.length}</span>
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={openAddPerson}>
+              <UserPlus className="mr-1.5 h-4 w-4" />
+              Add
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1">
+              {flatmates.map((f) => (
+                <li key={f.id} className="flex items-center gap-3 rounded-lg px-1 py-1.5">
+                  <PersonAvatar id={f.id} name={f.name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{f.name}</p>
+                    {(f.email || f.phone) && (
+                      <p className="truncate text-xs text-muted-foreground">{f.email || f.phone}</p>
+                    )}
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Options for ${f.name}`}>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => openEditPerson(f)}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setDeletingPerson(f)}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Remove
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      <ExpenseFormDialog
+        open={expenseOpen}
+        onOpenChange={setExpenseOpen}
+        flatmates={flatmates}
+        onSaved={refresh}
+      />
+      {personDialog}
+
+      <AlertDialog open={!!deletingPerson} onOpenChange={(open) => !open && setDeletingPerson(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {deletingPerson?.name}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                {deletingImpact.paid > 0 ? (
+                  <p>
+                    <span className="font-semibold text-destructive">
+                      {deletingImpact.paid} expense{deletingImpact.paid === 1 ? "" : "s"} they paid (
+                      {formatINR(deletingImpact.paidTotal)}) will be deleted too.
+                    </span>
+                  </p>
+                ) : null}
+                {deletingImpact.splitIn > 0 && (
+                  <p>
+                    They'll also be dropped from {deletingImpact.splitIn} other split
+                    {deletingImpact.splitIn === 1 ? "" : "s"}, which changes everyone else's shares.
+                  </p>
+                )}
+                <p>This can't be undone.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                confirmDeletePerson();
+              }}
+              disabled={deleteBusy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

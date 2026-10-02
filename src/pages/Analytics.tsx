@@ -829,10 +829,10 @@ function StatCard({
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               {label}
             </p>
-            <p className="text-xl sm:text-2xl font-bold mt-2 truncate">{value}</p>
+            <p className="text-lg sm:text-2xl font-bold mt-2 truncate tabular-nums">{value}</p>
             <p className="text-xs text-muted-foreground mt-1">{sub}</p>
           </div>
-          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0", TINT_CLASSES[tint])}>
+          <div className={cn("w-9 h-9 rounded-lg hidden sm:flex items-center justify-center flex-shrink-0", TINT_CLASSES[tint])}>
             <Icon className="w-4 h-4" />
           </div>
         </div>

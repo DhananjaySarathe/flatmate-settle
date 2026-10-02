@@ -208,17 +208,17 @@ const SplitSpaces = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">SplitSpaces</h1>
-          <p className="text-muted-foreground mt-1">
+          <h1 className="text-2xl sm:text-3xl font-bold">Split spaces</h1>
+          <p className="text-muted-foreground mt-1 text-sm sm:text-base">
             Manage your expense groups. Each SplitSpace has its own flatmates and expenses.
           </p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button onClick={() => {
+            <Button className="self-start sm:self-auto" onClick={() => {
               setEditingSplitSpace(null);
               setFormData({ name: "" });
             }}>

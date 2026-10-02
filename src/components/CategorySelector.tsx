@@ -178,6 +178,7 @@ export const CategorySelector = ({
                   placeholder="e.g., Entertainment, Healthcare"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
+                      e.preventDefault();
                       handleCreateCategory();
                     }
                   }}
