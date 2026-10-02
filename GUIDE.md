@@ -78,27 +78,27 @@ Welcome to **ExpenseWaale**, your comprehensive expense splitting application! T
 
 ### Adding a Flatmate
 
-1. Go to the **Dashboard** page
-2. Click **"Add Flatmate"** button
+1. Go to the **Home** page (the dashboard)
+2. Click **"Add"** next to **Members** (or **"Add first member"** in a new space)
 3. Fill in the information:
    - **Name** (required): The person's name
    - **Email** (optional): Their email address (useful for sending reports)
    - **Phone** (optional): Their phone number
-4. Click **"Add Flatmate"**
+4. Click **"Add member"**
 
 **Important**: Flatmates are added to your currently selected Split Space. Make sure you have the right Split Space selected!
 
 ### Editing a Flatmate
 
-- Click the **Edit** icon (pencil) on any flatmate card
+- Click the **Edit** icon (pencil) next to the member on Home
 - Update their information and save
 
 ### Deleting a Flatmate
 
-- Click the **Delete** icon (trash) on a flatmate card
-- Confirm the deletion
+- Click the **Delete** icon (trash) next to the member on Home
+- The confirmation tells you exactly what will be affected. Confirm to delete.
 
-**Note**: If a flatmate has expenses associated with them, you may need to handle those expenses first.
+**Warning**: Deleting a member also permanently deletes every expense **they paid**, and removes them from expenses they shared (which changes everyone else's shares). If you want to keep the history, don't delete the member.
 
 ---
 
@@ -108,41 +108,41 @@ The **Expenses** page is where you record all shared expenses and split them amo
 
 ### Adding an Expense
 
-1. Go to the **Expenses** page
-2. Click **"Add Expense"** button
+1. Click **"Add expense"** on Home or Expenses (on mobile, tap the **+** button in the bottom bar)
+2. The form opens with everyone selected and the last payer you used pre-picked
 3. Fill in the expense details:
 
    - **Title**: What the expense is for (e.g., "Grocery Shopping", "Uber Ride")
    - **Amount**: The total cost (e.g., 150.00)
    - **Date**: When the expense occurred
-   - **Paid By**: Who paid for this expense (select from your flatmates)
+   - **Paid By**: Tap the person who paid
    - **Category**: Select a category (Food, Travel, Rent, Groceries, Utilities, Fuel, Shopping, Misc, or create a custom category)
-   - **Split Between**: Select all the people who should share this cost
-     - Use **"Select All"** button to quickly select everyone
-     - Or check the boxes next to each flatmate's name individually
-     - The amount will be automatically divided equally among selected people
+   - **Split Between**: Everyone is selected by default. Tap names to leave people out.
+     - **"Everyone"** / **"Clear"** toggles the whole group
+     - The amount is divided equally, and the form shows each person's share before you save
 
 4. Click **"Add Expense"**
 
 ### How Expense Splitting Works
 
-- If an expense is **$100** and split between **4 people**, each person owes **$25**
+- If an expense is **₹100** and split between **4 people**, each person owes **₹25**
 - The person who paid gets credited for the full amount
 - The system automatically calculates who owes what to whom
 
 ### Editing an Expense
 
-- Click the **Edit** icon on any expense card
+- Tap an expense in the list (or use its **⋮** menu → **Edit**)
 - Modify the details (including category) and save
 
 ### Deleting an Expense
 
-- Click the **Delete** icon on an expense card
+- Open the expense's **⋮** menu → **Delete**
 - Confirm the deletion
 
 ### Viewing Expenses
 
-- Expenses are displayed as cards showing:
+- Expenses are grouped by month, with a total for each month. Use the search box to find one by title, category or payer.
+- Each row shows:
   - Title and category badge
   - Amount and date
   - Who paid
