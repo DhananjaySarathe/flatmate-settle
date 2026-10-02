@@ -39,7 +39,7 @@ export const SplitSpaceSelector = () => {
 
   return (
     <div className="flex items-center gap-2">
-      <Building2 className="w-4 h-4 text-muted-foreground" />
+      <Building2 className="hidden sm:block w-4 h-4 text-muted-foreground" />
       <Select
         value={selectedSplitSpace?.id || ""}
         onValueChange={(value) => {
@@ -49,7 +49,7 @@ export const SplitSpaceSelector = () => {
           }
         }}
       >
-        <SelectTrigger className="w-[180px] h-8">
+        <SelectTrigger className="w-[150px] sm:w-[180px] h-9">
           <SelectValue placeholder="Select SplitSpace">
             {selectedSplitSpace?.name || "Select SplitSpace"}
           </SelectValue>
