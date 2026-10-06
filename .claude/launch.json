@@ -1,0 +1,50 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev-xhigh",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "8093",
+        "--strictPort"
+      ],
+      "port": 8093,
+      "autoPort": false
+    },
+    {
+      "name": "harness-mock",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "/private/tmp/claude-501/-Users-apple-Desktop-Learnings-split-pro/df84fb9b-f922-4437-8c38-0e3f6c0a5182/scratchpad/harness/vite.config.ts"
+      ],
+      "port": 8094,
+      "autoPort": false
+    },
+    {
+      "name": "harness-max",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "/private/tmp/claude-501/-Users-apple-Desktop-Learnings-split-pro/38c08664-6a3d-4893-8008-07dcee1cadd3/scratchpad/harness/vite.config.ts"
+      ],
+      "port": 8095,
+      "autoPort": false
+    },
+    {
+      "name": "harness-ultracode",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "/private/tmp/claude-501/-Users-apple-Desktop-Learnings-split-pro/c5a78f37-09dc-4eb4-b7a0-ed0dab30e7d6/scratchpad/harness/vite.config.ts"
+      ],
+      "port": 8097,
+      "autoPort": false
+    }
+  ]
+}
